@@ -1,0 +1,55 @@
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python (ruff + black)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install lint tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install "ruff>=0.5,<1" "black>=24.0,<25"
+      - name: Ruff
+        run: ruff check .
+      - name: Black
+        run: black --check .
+
+  sql:
+    name: SQL (sqlfluff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install sqlfluff
+        run: |
+          python -m pip install --upgrade pip
+          pip install "sqlfluff>=3.0,<4"
+      - name: Lint SQL files (if any exist)
+        # Glob-guarded so the workflow is green during early slices before any
+        # SQL has been added. Once snowflake/ has files, this becomes a hard
+        # gate automatically.
+        run: |
+          shopt -s globstar nullglob
+          files=( snowflake/**/*.sql )
+          if (( ${#files[@]} == 0 )); then
+            echo "No SQL files found — skipping."
+            exit 0
+          fi
+          sqlfluff lint --disable-progress-bar "${files[@]}"
