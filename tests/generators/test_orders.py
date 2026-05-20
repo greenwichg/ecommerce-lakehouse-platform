@@ -133,6 +133,29 @@ def test_order_spec_idempotent(orders_test_cfg: dict) -> None:
     assert a == b
 
 
+def test_cancellation_after_paid_preserves_paid_at(orders_test_cfg: dict) -> None:
+    """A cancellation snapshot must carry paid_at/shipped_at if the order
+    progressed past those stages before being cancelled."""
+    from generators.orders import _build_order_spec, _snapshot
+
+    cfg = dict(orders_test_cfg["generators"]["orders"])
+    cfg["cancellation_pct"] = 100.0  # force cancellation
+    # Find a spec that cancelled at step 2 (after paid) or step 3 (after shipped)
+    for index in range(500):
+        spec = _build_order_spec(
+            dt.date(2025, 5, 1), index, cfg, seed=42, customer_count=100, product_count=50
+        )
+        if spec.cancelled_at is not None and spec.paid_at is not None:
+            snap = _snapshot(spec, "cancelled", spec.cancelled_at)
+            assert snap["paid_at"] == spec.paid_at, "cancellation must preserve paid_at"
+            assert snap["cancelled_at"] == spec.cancelled_at
+            assert snap["delivered_at"] is None  # never delivered if cancelled
+            if spec.shipped_at is not None:
+                assert snap["shipped_at"] == spec.shipped_at
+            return
+    raise AssertionError("expected at least one cancel-after-paid in 500 trials")
+
+
 def test_order_spec_cancellation_clears_later_timestamps(orders_test_cfg: dict) -> None:
     """An order that cancels at step 1 must have paid/shipped/delivered = None."""
     cfg = dict(orders_test_cfg["generators"]["orders"])

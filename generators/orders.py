@@ -193,13 +193,33 @@ def _transition_events(spec: _OrderSpec) -> list[tuple[str, dt.datetime]]:
 def _snapshot(spec: _OrderSpec, status: str, at: dt.datetime) -> dict:
     """Render the order's record at the given status with ``updated_at=at``.
 
-    Earlier transition timestamps remain populated; later ones (relative to
-    ``status``) are nulled. This is the wire format the bronze layer ingests.
+    Earlier transition timestamps that actually happened are preserved;
+    later ones (relative to ``status``) are nulled. For a cancellation,
+    that means paid_at/shipped_at are carried over if the order had
+    progressed before being cancelled — without this, MERGE-driven
+    downstream tables would lose those timestamps the moment a
+    cancellation record arrived.
     """
-    paid = spec.paid_at if status in {STATUS_PAID, STATUS_SHIPPED, STATUS_DELIVERED} else None
-    shipped = spec.shipped_at if status in {STATUS_SHIPPED, STATUS_DELIVERED} else None
-    delivered = spec.delivered_at if status == STATUS_DELIVERED else None
-    cancelled = spec.cancelled_at if status == STATUS_CANCELLED else None
+    if status == STATUS_PLACED:
+        paid = shipped = delivered = cancelled = None
+    elif status == STATUS_PAID:
+        paid = spec.paid_at
+        shipped = delivered = cancelled = None
+    elif status == STATUS_SHIPPED:
+        paid, shipped = spec.paid_at, spec.shipped_at
+        delivered = cancelled = None
+    elif status == STATUS_DELIVERED:
+        paid, shipped, delivered = spec.paid_at, spec.shipped_at, spec.delivered_at
+        cancelled = None
+    elif status == STATUS_CANCELLED:
+        # spec.paid_at/shipped_at are non-None only if the order progressed
+        # past those stages before cancellation. Pass them through.
+        paid, shipped = spec.paid_at, spec.shipped_at
+        delivered = None
+        cancelled = spec.cancelled_at
+    else:
+        raise ValueError(f"Unknown status: {status!r}")
+
     return {
         "order_id": spec.order_id,
         "customer_id": spec.customer_id,
