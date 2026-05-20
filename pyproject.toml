@@ -90,6 +90,9 @@ testpaths = ["tests", "databricks/tests", "airflow/tests"]
 # so notebooks and tests both write `from libs.x import y`. airflow/ is added so DAG-level
 # helpers (callbacks, dq_gates) can be imported by airflow/tests/.
 pythonpath = [".", "databricks", "airflow"]
+# importlib-mode avoids the "two conftest.py with the same package name" collision
+# we'd otherwise hit when test trees mirror each other (tests/, databricks/tests/, ...).
+addopts = "--import-mode=importlib"
 markers = [
     "spark: tests requiring a SparkSession (skipped if pyspark not installed)",
     "integration: end-to-end tests requiring local Delta + sample data",
