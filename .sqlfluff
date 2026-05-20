@@ -1,0 +1,28 @@
+[sqlfluff]
+dialect = snowflake
+templater = jinja
+max_line_length = 100
+# L034 (col order) and L036 (single col per line) conflict with our preferred style
+exclude_rules = structure.column_order, layout.select_targets
+
+[sqlfluff:indentation]
+tab_space_size = 4
+indent_unit = space
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = upper
+
+[sqlfluff:rules:capitalisation.identifiers]
+extended_capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.functions]
+extended_capitalisation_policy = upper
+
+[sqlfluff:rules:capitalisation.literals]
+capitalisation_policy = upper
+
+[sqlfluff:rules:capitalisation.types]
+extended_capitalisation_policy = upper
+
+[sqlfluff:rules:references.keywords]
+unquoted_identifiers_policy = all

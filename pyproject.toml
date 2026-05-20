@@ -1,0 +1,96 @@
+[project]
+name = "ecommerce-lakehouse-platform"
+version = "0.1.0"
+description = "Production-grade ecommerce lakehouse: generators -> S3 -> Databricks -> Snowflake -> Streamlit."
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = { text = "MIT" }
+dependencies = [
+    "faker>=24.0,<26",
+    "pyyaml>=6.0,<7",
+    "click>=8.1,<9",
+    "pandas>=2.2,<3",
+    "pyarrow>=15.0,<18",
+    "fsspec>=2024.3",
+    "s3fs>=2024.3",
+    "requests>=2.31,<3",
+    "python-dateutil>=2.9,<3",
+]
+
+[project.optional-dependencies]
+spark = [
+    "pyspark==3.5.1",
+    "delta-spark==3.2.0",
+]
+airflow = [
+    "apache-airflow==2.10.4",
+    "apache-airflow-providers-amazon>=8.28,<9",
+    "apache-airflow-providers-databricks>=6.11,<7",
+    "apache-airflow-providers-snowflake>=5.7,<6",
+    "apache-airflow-providers-common-sql>=1.18,<2",
+]
+streamlit = [
+    "streamlit>=1.36,<2",
+    "snowflake-connector-python>=3.10,<4",
+    "altair>=5.3,<6",
+]
+dev = [
+    "pytest>=8.0,<9",
+    "pytest-cov>=5.0,<6",
+    "chispa>=0.10,<1",
+    "ruff>=0.5,<1",
+    "black>=24.0,<25",
+    "sqlfluff>=3.0,<4",
+    "moto[s3,sqs,sns,lambda]>=5.0,<6",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["generators*"]
+exclude = ["tests*", "data*", "airflow*", "databricks*", "infrastructure*", "snowflake*", "lambda*", "streamlit_app*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [
+    "data",
+    "infrastructure/terraform/.terraform",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N", "SIM", "C4", "PIE", "RET"]
+ignore = [
+    "E501",   # line length handled by black
+    "B008",   # function call in default arg — common in Airflow Operator constructors
+    "N999",   # invalid module name — Airflow DAG file naming
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["N802", "N806"]  # test functions/vars often use non-snake_case for clarity
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+extend-exclude = '''
+(
+    data
+  | infrastructure/terraform/\.terraform
+)
+'''
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# generators/ is importable as-is; databricks/libs/ is reached by putting databricks/ on the path
+# so notebooks and tests both write `from libs.x import y`.
+pythonpath = [".", "databricks"]
+markers = [
+    "spark: tests requiring a SparkSession (skipped if pyspark not installed)",
+    "integration: end-to-end tests requiring local Delta + sample data",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:pyspark.*",
+    "ignore::DeprecationWarning:pkg_resources.*",
+]
