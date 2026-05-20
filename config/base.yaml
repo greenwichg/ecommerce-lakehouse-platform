@@ -1,0 +1,69 @@
+# Base configuration shared across all environments.
+# Environment-specific files (dev.yaml, prod.yaml) deep-merge on top of this.
+# Values can reference environment variables as ${VAR_NAME}; the config loader
+# resolves these at read time. Missing env vars surface a clear error rather
+# than producing a string with a literal "${VAR}" in it.
+
+project:
+  name: ecommerce-lakehouse-platform
+  owner: data-platform
+
+# Synthetic data generator parameters. These drive volume and realism so that
+# downstream layers have meaningful signal (late arrivals exercise watermarks,
+# updates drive SCD2 and accumulating snapshots, etc.).
+generators:
+  random_seed: 42  # makes runs idempotent for the same date range
+  orders:
+    records_per_day: 1000
+    late_arrival_pct: 2.0      # records with created_at < partition date
+    same_day_update_pct: 1.0   # placed orders that also progress within the day
+    cancellation_pct: 5.0      # of all orders that ever progress
+    statuses: [placed, paid, shipped, delivered, cancelled]
+    avg_items_per_order: 2.3
+    price_min: 4.99
+    price_max: 499.99
+    # Mean days an order spends in each status before transitioning.
+    # Variance is fixed inside the generator; tweak here, not in code.
+    transition_days_mean:
+      placed_to_paid: 0.5
+      paid_to_shipped: 1.5
+      shipped_to_delivered: 3.5
+  clickstream:
+    records_per_day: 50000
+    session_gap_minutes: 30
+    anonymous_pct: 30.0
+  products:
+    record_count: 5000
+    daily_change_pct: 0.5
+  customers:
+    record_count: 10000
+    daily_change_pct: 0.3
+  currency_rates:
+    base_currency: USD
+    target_currencies: [EUR, GBP, JPY, CAD, AUD]
+    api_url: https://api.exchangerate.host/latest
+
+# Partitioned path conventions. All raw writes land under:
+#   <bucket_root>/<raw_prefix>/<source>/year=YYYY/month=MM/day=DD/<file>
+paths:
+  raw_prefix: raw
+  bronze_prefix: bronze
+  silver_prefix: silver
+  gold_prefix: gold
+  quarantine_prefix: quarantine
+  checkpoint_prefix: _checkpoints
+  partitioning: "year={year:04d}/month={month:02d}/day={day:02d}"
+
+# Data quality. Hardcoded for now; will be threshold-tunable per-source in a
+# later slice (per session note).
+data_quality:
+  late_arrival_window_days: 10
+  row_count_drop_threshold_pct: 20.0
+  row_count_baseline_days: 7
+
+# Airflow defaults
+airflow:
+  default_retries: 2
+  retry_delay_minutes: 5
+  sla_hours: 4
+  pool: lakehouse

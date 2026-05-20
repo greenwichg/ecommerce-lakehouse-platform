@@ -1,0 +1,37 @@
+# Local development overrides. Layered on top of base.yaml.
+# Pointing storage at the local filesystem means generators can run with no
+# AWS credentials. The Bronze notebook still uses Auto Loader semantics
+# (cloudFiles) — that just means it works against any fsspec-readable URL.
+env: dev
+
+storage:
+  # ${PROJECT_ROOT} is set by direnv/shell. Falls through to current working dir
+  # if unset (handled in libs.config).
+  bucket: file://${PROJECT_ROOT}/data
+  region: us-east-1
+
+databricks:
+  workspace_url: ${DATABRICKS_HOST}
+  cluster_id: ${DATABRICKS_CLUSTER_ID}
+  catalog: dev_lakehouse
+  schemas:
+    bronze: bronze
+    silver: silver
+    gold: gold
+
+snowflake:
+  account: ${SNOWFLAKE_ACCOUNT}
+  user: ${SNOWFLAKE_USER}
+  warehouse: dev_wh
+  database: dev_lakehouse
+  role: dev_engineer
+  schemas:
+    raw: raw
+    staging: staging
+    analytics: analytics
+
+alerting:
+  sns_topic_arn: ${SNS_DEV_ALERT_ARN}
+
+airflow:
+  retries: 1   # lower than prod so failures surface fast in dev

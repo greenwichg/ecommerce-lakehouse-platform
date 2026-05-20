@@ -1,0 +1,32 @@
+# Production overrides. Layered on top of base.yaml.
+env: prod
+
+storage:
+  bucket: s3://ecommerce-lakehouse-prod
+  region: us-east-1
+
+databricks:
+  workspace_url: ${DATABRICKS_HOST}
+  cluster_id: ${DATABRICKS_CLUSTER_ID}
+  catalog: prod_lakehouse
+  schemas:
+    bronze: bronze
+    silver: silver
+    gold: gold
+
+snowflake:
+  account: ${SNOWFLAKE_ACCOUNT}
+  user: ${SNOWFLAKE_USER}
+  warehouse: prod_etl_wh
+  database: prod_lakehouse
+  role: prod_engineer
+  schemas:
+    raw: raw
+    staging: staging
+    analytics: analytics
+
+alerting:
+  sns_topic_arn: ${SNS_PROD_ALERT_ARN}
+
+airflow:
+  retries: 3
