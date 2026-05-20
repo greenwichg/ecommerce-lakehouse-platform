@@ -1,0 +1,28 @@
+# Personal overrides for local development. Copy this to config/local.yaml
+# (which is gitignored) and adjust to taste. The config loader merges
+# layers in this order:
+#
+#     base.yaml  <  <env>.yaml  <  local.yaml
+#
+# so anything you put here wins over the committed env config. Useful for:
+#
+#  - pointing at a personal S3 bucket while testing
+#  - tighter generator volumes for faster iteration
+#  - your own Databricks workspace / Snowflake account
+#
+# Do NOT put secrets here — local.yaml is on disk in plaintext. Secrets
+# belong in env vars (dev) or AWS Secrets Manager (prod).
+
+# Example: shrink the orders generator for a fast smoke loop
+# generators:
+#   orders:
+#     records_per_day: 50
+
+# Example: point at a personal S3 bucket
+# storage:
+#   bucket: s3://my-personal-lakehouse-sandbox
+
+# Example: use your own Databricks workspace
+# databricks:
+#   workspace_url: https://my-workspace.cloud.databricks.com
+#   cluster_id: 0123-456789-mycluster

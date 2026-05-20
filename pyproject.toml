@@ -82,10 +82,14 @@ extend-exclude = '''
 '''
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# Tests live next to the code they exercise: generators -> tests/, Databricks
+# libs -> databricks/tests/, Airflow DAGs -> airflow/tests/. Top-level tests/
+# also catches cross-cutting tests.
+testpaths = ["tests", "databricks/tests", "airflow/tests"]
 # generators/ is importable as-is; databricks/libs/ is reached by putting databricks/ on the path
-# so notebooks and tests both write `from libs.x import y`.
-pythonpath = [".", "databricks"]
+# so notebooks and tests both write `from libs.x import y`. airflow/ is added so DAG-level
+# helpers (callbacks, dq_gates) can be imported by airflow/tests/.
+pythonpath = [".", "databricks", "airflow"]
 markers = [
     "spark: tests requiring a SparkSession (skipped if pyspark not installed)",
     "integration: end-to-end tests requiring local Delta + sample data",

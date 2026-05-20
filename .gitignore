@@ -68,3 +68,6 @@ data/_tmp/
 # Misc
 *.log
 .cache/
+
+# Personal config overrides — pattern (committed) vs. file (ignored)
+config/local.yaml
