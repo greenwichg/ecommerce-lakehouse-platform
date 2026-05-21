@@ -31,8 +31,8 @@ resource "aws_lambda_function" "quarantine_helper" {
 
   environment {
     variables = {
-      LAKEHOUSE_BUCKET     = var.bucket_id
-      AIRFLOW_SECRET_NAME  = "${var.name_prefix}/airflow-api-creds"
+      LAKEHOUSE_BUCKET    = var.bucket_id
+      AIRFLOW_SECRET_NAME = "${var.name_prefix}/airflow-api-creds"
     }
   }
 
@@ -69,10 +69,10 @@ resource "aws_sfn_state_machine" "quarantine_replay" {
   role_arn = var.sfn_role_arn
 
   definition = templatefile("${path.module}/definition.asl.json", {
-    alerts_topic_arn        = var.alerts_topic_arn
-    validator_function_arn  = var.validator_function_arn
-    helper_function_arn     = aws_lambda_function.quarantine_helper.arn
-    bucket_id               = var.bucket_id
+    alerts_topic_arn       = var.alerts_topic_arn
+    validator_function_arn = var.validator_function_arn
+    helper_function_arn    = aws_lambda_function.quarantine_helper.arn
+    bucket_id              = var.bucket_id
   })
 
   logging_configuration {
@@ -81,7 +81,7 @@ resource "aws_sfn_state_machine" "quarantine_replay" {
     log_destination        = "${var.log_group_arn}:*"
   }
 
-  type = "STANDARD"  # Express incompatible with 7-day human wait
+  type = "STANDARD" # Express incompatible with 7-day human wait
 
   tags = var.tags
 }

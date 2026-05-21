@@ -61,15 +61,15 @@ resource "aws_cloudwatch_metric_alarm" "currency_fallback_rate" {
   # daily DAG run. Threshold = 50% matches the gate's hard-fail boundary;
   # the alarm gives us advance notice via SNS even when the gate hasn't
   # fired yet.
-  metric_name         = "CurrencySimulatedPct"
-  namespace           = "Lakehouse/Pipeline"
-  period              = 86400
-  statistic           = "Maximum"
-  threshold           = 50
-  alarm_description   = "Currency API fallback rate > 50% — investigate exchangerate.host availability"
-  treat_missing_data  = "notBreaching"
-  alarm_actions       = [var.sns_alerts_topic_arn]
-  tags                = var.tags
+  metric_name        = "CurrencySimulatedPct"
+  namespace          = "Lakehouse/Pipeline"
+  period             = 86400
+  statistic          = "Maximum"
+  threshold          = 50
+  alarm_description  = "Currency API fallback rate > 50% — investigate exchangerate.host availability"
+  treat_missing_data = "notBreaching"
+  alarm_actions      = [var.sns_alerts_topic_arn]
+  tags               = var.tags
 }
 
 # -----------------------------------------------------------------------------
@@ -80,9 +80,9 @@ resource "aws_cloudwatch_metric_alarm" "currency_fallback_rate" {
 resource "aws_cloudwatch_dashboard" "pipeline" {
   dashboard_name = "${var.name_prefix}-pipeline"
   dashboard_body = templatefile("${path.module}/dashboard_body.json", {
-    region        = data.aws_region.current.name
-    name_prefix   = var.name_prefix
-    bucket_name   = var.bucket_name
+    region      = data.aws_region.current.name
+    name_prefix = var.name_prefix
+    bucket_name = var.bucket_name
   })
 }
 

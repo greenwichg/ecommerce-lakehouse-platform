@@ -41,7 +41,7 @@ data "aws_iam_policy_document" "sfn_inline" {
   }
 
   statement {
-    sid     = "MoveQuarantineFilesBackToRaw"
+    sid = "MoveQuarantineFilesBackToRaw"
     actions = [
       "s3:GetObject", "s3:GetObjectAttributes",
       "s3:PutObject", "s3:DeleteObject",

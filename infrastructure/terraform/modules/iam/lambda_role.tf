@@ -57,7 +57,7 @@ data "aws_iam_policy_document" "lambda_inline" {
   }
 
   statement {
-    sid     = "ConsumeValidatorQueue"
+    sid = "ConsumeValidatorQueue"
     actions = [
       "sqs:ReceiveMessage", "sqs:DeleteMessage",
       "sqs:GetQueueAttributes", "sqs:GetQueueUrl",
@@ -78,7 +78,7 @@ data "aws_iam_policy_document" "lambda_inline" {
   }
 
   statement {
-    sid       = "EmitCloudWatchMetrics"
+    sid = "EmitCloudWatchMetrics"
     # Note: cloudwatch:PutMetricData can't be scoped by namespace via
     # IAM — it's a service limitation. Documented in README.md.
     actions   = ["cloudwatch:PutMetricData"]

@@ -18,11 +18,11 @@ locals {
       token = "PLACEHOLDER_REPLACE_VIA_PUT_SECRET_VALUE"
     })
     "snowflake-creds" = jsonencode({
-      account    = "PLACEHOLDER"
-      user       = "lakehouse_engineer"
-      role       = "lakehouse_engineer"
-      warehouse  = "prod_etl_wh"
-      database   = "prod_lakehouse"
+      account   = "PLACEHOLDER"
+      user      = "lakehouse_engineer"
+      role      = "lakehouse_engineer"
+      warehouse = "prod_etl_wh"
+      database  = "prod_lakehouse"
       # Snowflake prod auth uses key-pair, not password. PEM placeholder
       # gets put_secret_value'd to the real RSA private key post-apply.
       private_key_pem = "PLACEHOLDER_REPLACE_VIA_PUT_SECRET_VALUE"

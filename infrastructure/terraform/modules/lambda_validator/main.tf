@@ -16,7 +16,7 @@
 # tells ops to investigate.
 resource "aws_sqs_queue" "validator_dlq" {
   name                       = "${var.name_prefix}-validator-queue-dlq"
-  message_retention_seconds  = 14 * 24 * 3600  # 14 days
+  message_retention_seconds  = 14 * 24 * 3600 # 14 days
   visibility_timeout_seconds = var.visibility_timeout_seconds
   tags                       = var.tags
 }
@@ -24,7 +24,7 @@ resource "aws_sqs_queue" "validator_dlq" {
 resource "aws_sqs_queue" "validator" {
   name                       = "${var.name_prefix}-validator-queue"
   visibility_timeout_seconds = var.visibility_timeout_seconds
-  message_retention_seconds  = 4 * 24 * 3600   # 4 days
+  message_retention_seconds  = 4 * 24 * 3600 # 4 days
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.validator_dlq.arn
     maxReceiveCount     = 3
@@ -88,9 +88,9 @@ resource "aws_lambda_function" "validator" {
 # invocation; partial-batch reporting lets one bad message not poison
 # the whole batch.
 resource "aws_lambda_event_source_mapping" "validator" {
-  event_source_arn = aws_sqs_queue.validator.arn
-  function_name    = aws_lambda_function.validator.arn
-  batch_size       = 10
+  event_source_arn                   = aws_sqs_queue.validator.arn
+  function_name                      = aws_lambda_function.validator.arn
+  batch_size                         = 10
   maximum_batching_window_in_seconds = 5
   function_response_types            = ["ReportBatchItemFailures"]
 }

@@ -32,19 +32,19 @@ data "aws_iam_policy_document" "lambda_helper_inline" {
       variable = "s3:prefix"
       # _fixed/* lives under quarantine/, so quarantine/* covers both
       # the original file and the operator-uploaded fix.
-      values   = ["quarantine/*", "raw/*"]
+      values = ["quarantine/*", "raw/*"]
     }
   }
 
   statement {
-    sid     = "ReadQuarantineAndFixedFiles"
-    actions = ["s3:GetObject", "s3:GetObjectAttributes"]
+    sid       = "ReadQuarantineAndFixedFiles"
+    actions   = ["s3:GetObject", "s3:GetObjectAttributes"]
     resources = [local.quarantine_prefix]
   }
 
   statement {
-    sid     = "MoveBackToRawAndDeleteFromQuarantine"
-    actions = ["s3:PutObject", "s3:DeleteObject"]
+    sid       = "MoveBackToRawAndDeleteFromQuarantine"
+    actions   = ["s3:PutObject", "s3:DeleteObject"]
     resources = [local.raw_prefix, local.quarantine_prefix]
   }
 
@@ -57,8 +57,8 @@ data "aws_iam_policy_document" "lambda_helper_inline" {
   }
 
   statement {
-    sid       = "ReadAirflowApiCreds"
-    actions   = ["secretsmanager:GetSecretValue"]
+    sid     = "ReadAirflowApiCreds"
+    actions = ["secretsmanager:GetSecretValue"]
     # Airflow creds are one of three secrets created in modules/secrets.
     # Scoped to that specific secret rather than all of var.secrets_arns
     # since this Lambda doesn't need Databricks PAT or Snowflake creds.

@@ -67,7 +67,7 @@ data "aws_iam_policy_document" "airflow_inline" {
   }
 
   statement {
-    sid     = "WriteAirflowLogs"
+    sid = "WriteAirflowLogs"
     actions = [
       "logs:CreateLogGroup", "logs:CreateLogStream",
       "logs:PutLogEvents", "logs:DescribeLogGroups",
