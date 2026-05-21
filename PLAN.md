@@ -481,3 +481,60 @@ fb29540 feat(snowflake): clickstream staging + analytics + Snowpipe/Stream/Task
 3385088 feat(libs): clickstream sessionization + fact_sessions builder + tests
 7310753 feat(generators): clickstream JSON generator with hourly partitions + tests
 ```
+
+---
+
+## Session Recap (Slice 4)
+
+### Completed
+
+**Slice 4 — Currency rates + wishlist factless fact + marts + MV** (~6 commits, ~40 files, +73 tests over Slice 3)
+
+| Area | Files | New tests |
+|------|-------|-----------|
+| `generators/{currency_rates,wishlist}.py` + tests | 4 | 29 (15+14) |
+| `databricks/libs/{marts,wishlist}.py` + tests | 4 | 16 (10+6) |
+| `databricks/libs/{gold,quality}.py` (modified for category denorm + CURRENCY/WISHLIST rules) | (modified) | — |
+| `databricks/notebooks/**` (7 new: bronze+silver+gold for currency_rates + wishlist + customer_ltv) | 7 | — |
+| `snowflake/ddl/**` (6 new DDL + 1 evidence MD + 1 modified) | 8 | — |
+| `snowflake/dml/**` (3 new + 1 modified) | 4 | — |
+| `snowflake/tests/**` (5 new) | 5 | — |
+| `orchestration/dags/{daily_batch_pipeline,dq_gates}.py` (modified) + tests | (modified) | 4 new orchestration |
+
+**Final test count: 270 passing** (was 197). All lint clean (`ruff`, `black`, `sqlfluff`).
+
+### Deviations from the original plan
+
+1. **`_source` provenance column on currency_rates** added per your observability pushback. Propagates Bronze→Silver→Gold→Snowflake unchanged. The `dq_currency_freshness` gate uses it to distinguish "no rates today" (hard fail) from "all rates simulated" (also hard fail) — without `_source` those would be indistinguishable from a row-count check.
+
+2. **MV denormalisation forced by Snowflake restrictions**. Single-table MVs only, no joins. Workaround: PIT-bound `category` denormalised into `fact_orders` during gold build via the new `extra_cols` parameter on `pit_join_scd2`. Walkthrough lives in `snowflake/ddl/mv_evidence.md`. PIT-at-order-time also turns out to be more correct than a current-category join for historical revenue analytics.
+
+3. **`customer_ltv` stays in Databricks Gold, not Snowflake MV**. Window functions (LAG over per-customer timeline for `avg_days_between_orders`) disqualify it from MV. Documented in `libs.marts` module docstring.
+
+4. **Factless fact: per-event grain chosen** over per-relationship. Re-adds carry signal; the DISTINCT-needed-for-current-state trade-off is the canonical Kimball ergonomic. Documented in `docs/architecture.md` + the wishlist module docstring.
+
+5. **`max_by` rank-by-null trick reused** for currency_rates' `_fetched_at`-based dedup in silver. Same Spark semantic gotcha from Slice 3 — `max_by(value, key)` ignores NULL keys but NOT NULL values. Not directly relevant for the simple dedup-by-key in this slice, but the pattern is documented in `libs.sessionize` and stays available for future marts.
+
+### Customer LTV churn heuristic — documented as not a model
+
+The `predicted_churn_flag` is a 90-day-no-order + multiple-prior-orders rule. It's a placeholder so the Streamlit dashboard's "at-risk customers" widget has something to display. Real churn prediction is Slice 6+ work with proper features and a held-out test set. Single-order customers excluded from the flag because we can't distinguish "trial never returned" from "brand-new buyer".
+
+### Tests + lint status at session end
+
+```
+pytest          → 270 passed (was 197)
+ruff check .    → All checks passed!
+black --check . → All clean
+sqlfluff lint snowflake/ → All Finished! (0 violations)
+```
+
+### Commit log (Slice 4)
+
+```
+e17427e feat(orchestration): wire currency + wishlist + customer_ltv into daily DAG
+e2fc093 feat(snowflake): currency + wishlist + customer_ltv + MV + category denorm
+2fba7d5 feat(databricks): bronze/silver/gold notebooks for currency_rates + wishlist + customer_ltv
+088a290 feat(libs): customer_ltv mart + wishlist factless fact + category denorm on fact_orders
+3f50245 feat(generators): wishlist events with per-event grain + tests
+297f6d5 feat(generators): currency_rates with API + simulated fallback + _source provenance
+```

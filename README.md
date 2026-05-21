@@ -20,7 +20,7 @@ next. See [`PLAN.md`](PLAN.md) for the slice plan.
 | 1 | **Orders** end-to-end: generator → S3 → Bronze → Silver → Gold → Snowflake → Airflow → tests | ✅ done |
 | 2 | **Customers + Products** (SCD2 dimensions, PIT-correct surrogate joins) | ✅ done |
 | 3 | **Clickstream** + hourly DAG + sessionization + Snowpipe/Streams/Tasks + Dataset triggering | ✅ done |
-| 4 | Currency rates + remaining marts | ⏳ pending |
+| 4 | **Currency rates** + customer_ltv mart + wishlist factless fact + MV | ✅ done |
 | 5 | Infra hardening + DR + weekly maintenance DAG | ⏳ pending |
 | 6 | Streamlit + CI/CD deploy + full docs | ⏳ pending |
 

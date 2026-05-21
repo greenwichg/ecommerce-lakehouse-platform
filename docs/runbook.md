@@ -316,3 +316,34 @@ from the current batch based on a 10-min watermark would silently
 discard data — the watermark is a *next-batch coordination* concept,
 not a current-batch filter. Documented because we hit this during
 design and the next maintainer probably will too.
+
+## Slice 4 specifics
+
+### MV operations
+
+```sql
+-- Has the MV drifted from base?
+SELECT SYSTEM$MV_REFRESH_HISTORY(
+    'analytics.mv_daily_revenue_by_category',
+    DATEADD('HOUR', -24, CURRENT_TIMESTAMP())
+);
+
+-- Quantify the speedup the MV provides for a candidate query
+SELECT SYSTEM$ESTIMATE_MV_REFRESH_BENEFIT(
+    'analytics.mv_daily_revenue_by_category'
+);
+```
+
+### Currency freshness escalation
+
+| Symptom | First action | Escalate when |
+|---|---|---|
+| `dq_currency_freshness` raises "NO_RATES_FOR_TODAY" | Check Airflow `currency_rates` source path in S3. Re-run generator manually with `--start-date today --end-date today` | Generator output is empty too (upstream API completely unreachable) |
+| `dq_currency_freshness` raises "TOO_MANY_SIMULATED" (> 50%) | Check exchangerate.host status. Dashboard analysts should be told today's EUR/GBP numbers are estimates | API outage > 4h: notify finance ops that today's multi-currency revenue is approximate |
+
+The `_source` column lets analysts filter to API-only rates if they need strict provenance:
+
+```sql
+SELECT * FROM analytics.currency_rates
+WHERE rate_date = CURRENT_DATE - 1 AND _source = 'api';
+```

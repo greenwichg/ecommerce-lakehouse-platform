@@ -284,3 +284,65 @@ Snowflake credits for full SCD2 MERGEs that don't need hourly cadence.
   react to fresh upstream signal (the dashboard refresh).
 
 Each DAG has one job; failures are isolated; SLAs are meaningful.
+
+---
+
+## Slice 4 additions
+
+### Snowflake MV restrictions + denormalisation workaround
+
+Snowflake materialised views are stricter than the docs make obvious:
+**single base table only, no joins, no window functions, limited
+aggregates**. The natural target (`mv ON fact_orders × dim_product`)
+isn't possible. The chosen workaround: copy `category` into
+`fact_orders` during the Databricks gold build (via
+`pit_join_scd2(extra_cols=["category"])`), making the MV a single-table
+GROUP BY.
+
+PIT-correctness of the denorm is actually a *feature*: `category` is
+snapshotted at order-placement time, so a later product re-categorisation
+doesn't retroactively rewrite historical revenue. Matches the same
+PIT-on-`created_at` semantic we use for customer attribution.
+
+Full walkthrough in `snowflake/ddl/mv_evidence.md`.
+
+### `customer_ltv` lives in Databricks Gold (not MV)
+
+`avg_days_between_orders` uses `LAG()` over a per-customer order
+timeline. Snowflake MVs disqualify window functions; so the mart lives
+in Databricks Gold and Snowflake loads it via TRUNCATE+COPY swap.
+
+Tradeoff documented: Snowflake MV auto-refreshes incrementally on base
+table change; the Databricks mart refreshes once per daily DAG run.
+For "customer 360" point-lookups by `customer_sk` (the dashboard's
+actual access pattern), the freshness lag is acceptable — we don't
+need < 30-second LTV updates.
+
+### Currency `_source` provenance + freshness gate
+
+The currency_rates generator emits a per-row `_source` column with one
+of `'api'` (live exchangerate.host fetch) or `'simulated'` (deterministic
+fallback when the API was unavailable). It propagates through
+Bronze → Silver → Gold → Snowflake unchanged.
+
+The Airflow `dq_currency_freshness` gate (in `dq_gates.py`) hard-fails
+the daily DAG when:
+
+1. Today's rates table is empty (revenue conversion would yield NULL)
+2. More than 50% of today's rates are simulated (API has been down for
+   most of the fetch window — revenue numbers shouldn't be quoted as
+   authoritative until investigated)
+
+Critical observability detail: without `_source` we couldn't
+distinguish "no rates loaded" from "rates loaded but all fallback"; both
+look identical from a row-count perspective. The provenance column
+lets the gate fire on the second case before the dashboard reports it.
+
+### Factless fact at per-event grain
+
+`fact_customer_wishlist_product` keeps the per-event grain
+`(customer, product, added_at)` rather than per-relationship. Re-adds
+(same customer adding the same product after removing it) carry signal
+worth preserving. The trade-off (DISTINCT needed for "is this
+relationship currently active?" queries) is the canonical factless-fact
+ergonomic and matches Kimball's textbook treatment of events.
