@@ -114,11 +114,12 @@ def test_fact_orders_columns_and_total_amount(spark: SparkSession) -> None:
         schema=_silver_schema(),
     )
     dim_c = _single_version_dim(spark, ["c1"], "customer_id", "customer_sk")
-    dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk")
+    dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk", extra_cols={"category": ["electronics"]})
     fact = build_fact_orders(silver, dim_c, dim_p)
     expected = {
         "order_sk", "order_id", "customer_id", "customer_sk",
-        "product_id", "product_sk", "quantity", "price", "total_amount",
+        "product_id", "product_sk", "category",            # Slice 4: denormalised
+        "quantity", "price", "total_amount",
         "status", "created_at", "updated_at",
     }
     assert set(fact.columns) == expected
@@ -127,6 +128,8 @@ def test_fact_orders_columns_and_total_amount(spark: SparkSession) -> None:
     # SK populated via PIT join — no longer NULL post-Slice 2.
     assert row["customer_sk"] == "sk-0000"
     assert row["product_sk"] == "sk-0000"
+    # category denormalised from dim_product PIT (Slice 4 — for the MV)
+    assert row["category"] == "electronics"
     assert row["order_sk"] is not None
     assert len(row["order_sk"]) == 64  # sha256 hex
 
@@ -139,7 +142,7 @@ def test_order_sk_is_deterministic(spark: SparkSession) -> None:
     ]
     df = spark.createDataFrame(rows, schema=_silver_schema())
     dim_c = _single_version_dim(spark, ["c1"], "customer_id", "customer_sk")
-    dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk")
+    dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk", extra_cols={"category": ["electronics"]})
     a = build_fact_orders(df, dim_c, dim_p).first()["order_sk"]
     b = build_fact_orders(df, dim_c, dim_p).first()["order_sk"]
     assert a == b
@@ -272,7 +275,7 @@ def test_merge_fact_orders_inserts_then_updates(spark: SparkSession, tmp_path: P
         schema=_silver_schema(),
     )
     dim_c = _single_version_dim(spark, ["c1"], "customer_id", "customer_sk")
-    dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk")
+    dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk", extra_cols={"category": ["electronics"]})
     ensure_gold_table(spark, target, build_fact_orders(seed, dim_c, dim_p))
     merge_into_gold(spark, build_fact_orders(seed, dim_c, dim_p), target, ["order_id"])
 
@@ -307,7 +310,7 @@ def test_ensure_gold_table_idempotent(spark: SparkSession, tmp_path: Path) -> No
         schema=_silver_schema(),
     )
     dim_c = _single_version_dim(spark, ["c1"], "customer_id", "customer_sk")
-    dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk")
+    dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk", extra_cols={"category": ["electronics"]})
     fact = build_fact_orders(seed, dim_c, dim_p)
     ensure_gold_table(spark, target, fact)
     ensure_gold_table(spark, target, fact)  # second call is a no-op
@@ -460,7 +463,7 @@ def test_build_fact_orders_orphan_customer_yields_null_sk(spark: SparkSession) -
         schema=_silver_schema(),
     )
     dim_c = _single_version_dim(spark, ["c_present"], "customer_id", "customer_sk")
-    dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk")
+    dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk", extra_cols={"category": ["electronics"]})
     fact = build_fact_orders(silver, dim_c, dim_p).first()
     assert fact["customer_sk"] is None
     assert fact["product_sk"] == "sk-0000"  # product still resolved

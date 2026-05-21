@@ -44,14 +44,15 @@ def pit_join_scd2(
     natural_key: str,
     sk_col: str,
     fact_timestamp_col: str = "created_at",
+    extra_cols: Sequence[str] | None = None,
 ) -> DataFrame:
     """Point-in-time correct SCD2 join.
 
     Binds each fact row to the dim version that was *valid at the order's
-    placement time*. Returns the fact DataFrame with one new column
-    (``sk_col``) — the surrogate of the matching dim version, or NULL if
-    no matching version exists (LEFT join — orphan facts are surfaced for
-    a downstream DQ check, not silently dropped).
+    placement time*. Returns the fact DataFrame with the surrogate
+    column populated (NULL on no match — LEFT join, orphans surfaced for
+    downstream DQ rather than silently dropped), plus any columns listed
+    in ``extra_cols`` carried over from the dim version.
 
     Why ``created_at`` (the order's placed_at), not ``updated_at`` or load-
     time:
@@ -70,18 +71,28 @@ def pit_join_scd2(
         currency conversion); wrong for entities where address-at-order
         is the correct semantic.
 
+    Slice 4 ``extra_cols``: lets a caller pull additional dim columns
+    along with the surrogate — e.g., ``category`` denormalised into
+    ``fact_orders`` so the Snowflake MV (which can't join) has a single
+    base table to aggregate.
+
     Broadcast hint: ``broadcast(dim_df)`` — dim_customer at ~10k natural
     keys × ~10 SCD2 versions across a few years = O(100k) rows,
     comfortably under Spark's default 10MB broadcast threshold once
     encoded.
     """
-    sel_dim = dim_df.select(
+    extras = tuple(extra_cols or ())
+    dim_select_args = [
         F.col(natural_key).alias("__dim_nk"),
         F.col(sk_col).alias("__dim_sk"),
         F.col("effective_from").alias("__dim_from"),
         F.col("effective_to").alias("__dim_to"),
-    )
-    return (
+    ]
+    for col in extras:
+        dim_select_args.append(F.col(col).alias(f"__dim_extra_{col}"))
+    sel_dim = dim_df.select(*dim_select_args)
+
+    joined = (
         fact_df.alias("f")
         .join(
             F.broadcast(sel_dim),
@@ -91,8 +102,13 @@ def pit_join_scd2(
             "left",
         )
         .withColumn(sk_col, F.col("__dim_sk"))
-        .drop("__dim_nk", "__dim_sk", "__dim_from", "__dim_to")
     )
+    for col in extras:
+        joined = joined.withColumn(col, F.col(f"__dim_extra_{col}"))
+    drop_cols = ["__dim_nk", "__dim_sk", "__dim_from", "__dim_to"] + [
+        f"__dim_extra_{c}" for c in extras
+    ]
+    return joined.drop(*drop_cols)
 
 
 def build_fact_orders(
@@ -133,9 +149,22 @@ def build_fact_orders(
         F.col("updated_at"),
     )
     with_customer = pit_join_scd2(base, dim_customer, "customer_id", "customer_sk", "created_at")
-    with_both = pit_join_scd2(with_customer, dim_product, "product_id", "product_sk", "created_at")
+    # PIT-join product: pull surrogate AND category (Slice 4 denormalisation
+    # so the Snowflake MV — which can't do joins — has a single-table
+    # GROUP BY surface). category is snapshotted at order-placement time;
+    # a later product re-categorisation does NOT retroactively rewrite
+    # historical orders' category. This is PIT-correct for revenue-by-
+    # category analytics.
+    with_both = pit_join_scd2(
+        with_customer,
+        dim_product,
+        "product_id",
+        "product_sk",
+        "created_at",
+        extra_cols=["category"],
+    )
 
-    # Re-order so SK columns sit next to the natural key they shadow.
+    # Re-order so SK + denormalised cols sit next to the natural key they shadow.
     return with_both.select(
         "order_sk",
         "order_id",
@@ -143,6 +172,7 @@ def build_fact_orders(
         "customer_sk",
         "product_id",
         "product_sk",
+        "category",
         "quantity",
         "price",
         "total_amount",
