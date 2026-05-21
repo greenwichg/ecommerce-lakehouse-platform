@@ -27,8 +27,8 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from urllib.parse import unquote_plus
 from typing import Any
+from urllib.parse import unquote_plus
 
 import boto3
 
@@ -40,7 +40,7 @@ BUCKET = os.environ.get("LAKEHOUSE_BUCKET", "")
 ALERTS_TOPIC_ARN = os.environ.get("ALERTS_TOPIC_ARN", "")
 METRICS_NAMESPACE = "Lakehouse/Validator"
 MAX_FILE_SIZE_BYTES = 1024 * 1024 * 1024  # 1 GB
-MIN_FILE_SIZE_BYTES = 1                    # zero-byte files always quarantine
+MIN_FILE_SIZE_BYTES = 1  # zero-byte files always quarantine
 
 s3 = boto3.client("s3")
 sns = boto3.client("sns")
@@ -51,24 +51,54 @@ cloudwatch = boto3.client("cloudwatch")
 # handles schema evolution); missing ones are a quarantine.
 REQUIRED_COLUMNS: dict[str, set[str]] = {
     "orders": {
-        "order_id", "customer_id", "product_id", "quantity", "price",
-        "status", "created_at", "updated_at",
+        "order_id",
+        "customer_id",
+        "product_id",
+        "quantity",
+        "price",
+        "status",
+        "created_at",
+        "updated_at",
     },
     "customers": {
-        "customer_id", "name", "email", "address", "signup_date", "updated_at",
+        "customer_id",
+        "name",
+        "email",
+        "address",
+        "signup_date",
+        "updated_at",
     },
     "products": {
-        "product_id", "product_name", "category", "price", "sku", "updated_at",
+        "product_id",
+        "product_name",
+        "category",
+        "price",
+        "sku",
+        "updated_at",
     },
     "clickstream": {
-        "event_id", "session_id", "customer_id", "event_type", "page_url",
-        "event_ts", "device", "user_agent",
+        "event_id",
+        "session_id",
+        "customer_id",
+        "event_type",
+        "page_url",
+        "event_ts",
+        "device",
+        "user_agent",
     },
     "currency_rates": {
-        "rate_date", "base_currency", "target_currency", "rate", "_source",
+        "rate_date",
+        "base_currency",
+        "target_currency",
+        "rate",
+        "_source",
     },
     "wishlist": {
-        "wishlist_event_id", "customer_id", "product_id", "added_at", "source",
+        "wishlist_event_id",
+        "customer_id",
+        "product_id",
+        "added_at",
+        "source",
     },
 }
 
@@ -92,10 +122,10 @@ SOURCE_FORMATS: dict[str, str] = {
 class Outcome:
     """The result of validating one file."""
 
-    severity: str             # "validated" | "warn" | "quarantine"
-    reason: str               # short reason code (matches the manifest)
-    source: str               # orders / customers / etc.
-    rows: int | None = None   # row count if successfully parsed
+    severity: str  # "validated" | "warn" | "quarantine"
+    reason: str  # short reason code (matches the manifest)
+    source: str  # orders / customers / etc.
+    rows: int | None = None  # row count if successfully parsed
     size_bytes: int | None = None
     warnings: tuple[str, ...] = ()
 
@@ -187,9 +217,7 @@ def validate(bucket: str, key: str) -> Outcome:
     head = s3.head_object(Bucket=bucket, Key=key)
     size = head["ContentLength"]
     if size < MIN_FILE_SIZE_BYTES:
-        return Outcome(
-            severity="quarantine", reason="empty_file", source=source, size_bytes=size
-        )
+        return Outcome(severity="quarantine", reason="empty_file", source=source, size_bytes=size)
     if size > MAX_FILE_SIZE_BYTES:
         return Outcome(
             severity="quarantine", reason="file_too_large", source=source, size_bytes=size
@@ -211,9 +239,7 @@ def validate(bucket: str, key: str) -> Outcome:
         )
 
     if rows == 0:
-        return Outcome(
-            severity="quarantine", reason="zero_rows", source=source, size_bytes=size
-        )
+        return Outcome(severity="quarantine", reason="zero_rows", source=source, size_bytes=size)
 
     required = REQUIRED_COLUMNS[source]
     missing = required - columns

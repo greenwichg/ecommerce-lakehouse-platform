@@ -427,9 +427,11 @@ def test_weekly_maintenance_covers_all_medallion_layers() -> None:
     from weekly_maintenance import DELTA_TABLES
 
     layers = {t.split(".")[0] for t in DELTA_TABLES}
-    assert layers == {"bronze", "silver", "gold"}, (
-        f"weekly maintenance should cover bronze/silver/gold; got {layers}"
-    )
+    assert layers == {
+        "bronze",
+        "silver",
+        "gold",
+    }, f"weekly maintenance should cover bronze/silver/gold; got {layers}"
     # The Slice 4 gold marts MUST be included — they're append-heavy and
     # would degrade fastest if skipped.
     assert "gold.customer_ltv" in DELTA_TABLES

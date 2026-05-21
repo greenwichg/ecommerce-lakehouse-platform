@@ -35,39 +35,42 @@ AUTO_SUSPEND = 60
 AUTO_RESUME = TRUE
 INITIALLY_SUSPENDED = TRUE
 SCALING_POLICY = 'STANDARD'
-COMMENT = 'BI warehouse for Streamlit dashboard + analyst ad-hoc. Separated from ETL so a runaway dashboard query cannot starve the batch pipeline.';
+COMMENT = 'BI warehouse for Streamlit + analyst ad-hoc; separate from ETL so a runaway query cannot starve batch.';
 
 GRANT USAGE ON WAREHOUSE lakehouse_bi_wh TO ROLE lakehouse_analyst;
 GRANT OPERATE ON WAREHOUSE lakehouse_bi_wh TO ROLE lakehouse_engineer;
 
 -- ----------------------------------------------------------------------
--- ETL warehouse monitor: 20 credits/day, 400/month. The daily limit is
--- the "your DAG is misbehaving" tripwire; monthly is the budget cap.
+-- ETL warehouse monitor: 400 credits/month. NOTIFY at 75/90 give ops
+-- time to investigate before the hard SUSPEND at 100% (in-flight
+-- queries finish) and SUSPEND_IMMEDIATE at 110% (something is very
+-- wrong, abort everything).
 -- ----------------------------------------------------------------------
+-- noqa: disable=all
 CREATE OR REPLACE RESOURCE MONITOR rm_etl_wh
 WITH
-    CREDIT_QUOTA = 400               -- monthly cap
+    CREDIT_QUOTA = 400
     FREQUENCY = MONTHLY
     START_TIMESTAMP = IMMEDIATELY
-    NOTIFY_USERS = ('LAKEHOUSE_OPS')  -- single account-admin user; populated via SCIM in real deployments
+    NOTIFY_USERS = ('LAKEHOUSE_OPS')
     TRIGGERS
-        -- Notifications at 75/90 give ops time to investigate before
-        -- the hard cap kicks in.
         ON 75 PERCENT DO NOTIFY
         ON 90 PERCENT DO NOTIFY
-        ON 100 PERCENT DO SUSPEND          -- finish in-flight queries, then suspend
-        ON 110 PERCENT DO SUSPEND_IMMEDIATE; -- something is very wrong, abort
+        ON 100 PERCENT DO SUSPEND
+        ON 110 PERCENT DO SUSPEND_IMMEDIATE;
+-- noqa: enable=all
 
 ALTER WAREHOUSE {{ params.SNOWFLAKE_WAREHOUSE }} SET RESOURCE_MONITOR = rm_etl_wh;
 
--- Separate daily monitor lets us catch single-day cost spikes (e.g.,
--- accidentally querying without a partition filter) before they eat
--- into the monthly budget. Snowflake resource monitors are 1:1 with
--- warehouse though, so we layer at the account level instead.
+-- Snowflake resource monitors are 1:1 with warehouses, so we can't
+-- attach BOTH a daily and a monthly monitor to the same warehouse.
+-- The account-level monitor (below) gives us a coarser daily safety
+-- net that covers all warehouses at once.
 
 -- ----------------------------------------------------------------------
 -- BI warehouse monitor: smaller cap since analyst usage is sporadic.
 -- ----------------------------------------------------------------------
+-- noqa: disable=all
 CREATE OR REPLACE RESOURCE MONITOR rm_bi_wh
 WITH
     CREDIT_QUOTA = 100
@@ -79,6 +82,7 @@ WITH
         ON 90 PERCENT DO NOTIFY
         ON 100 PERCENT DO SUSPEND
         ON 110 PERCENT DO SUSPEND_IMMEDIATE;
+-- noqa: enable=all
 
 ALTER WAREHOUSE lakehouse_bi_wh SET RESOURCE_MONITOR = rm_bi_wh;
 
@@ -88,19 +92,21 @@ ALTER WAREHOUSE lakehouse_bi_wh SET RESOURCE_MONITOR = rm_bi_wh;
 -- created via ad-hoc CREATE WAREHOUSE in a script). Sized at 1.2× the
 -- sum of the per-warehouse caps so it only fires if those leaked.
 -- ----------------------------------------------------------------------
+-- noqa: disable=all
+-- Note: 600 credits = 400 + 100 = 500 expected + 20% headroom. No
+-- SUSPEND action on the account monitor — if we hit this we want
+-- notifications, not for ops queries to be cut off mid-investigation.
 CREATE OR REPLACE RESOURCE MONITOR rm_account_safety_net
 WITH
-    CREDIT_QUOTA = 600               -- 400 + 100 = 500 expected; 600 = 20% headroom
+    CREDIT_QUOTA = 600
     FREQUENCY = MONTHLY
     START_TIMESTAMP = IMMEDIATELY
     NOTIFY_USERS = ('LAKEHOUSE_OPS')
     TRIGGERS
         ON 75 PERCENT DO NOTIFY
         ON 90 PERCENT DO NOTIFY
-        -- No SUSPEND on the account monitor — if we hit this number,
-        -- something is very wrong and we want notifications to ops
-        -- without taking down everyone's queries unexpectedly.
         ON 100 PERCENT DO NOTIFY;
+-- noqa: enable=all
 
 ALTER ACCOUNT SET RESOURCE_MONITOR = rm_account_safety_net;
 
