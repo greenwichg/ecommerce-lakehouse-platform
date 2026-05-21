@@ -24,9 +24,9 @@ FROM (
         $1:order_sk::VARCHAR,
         $1:order_id::VARCHAR,
         $1:customer_id::VARCHAR,
-        $1:customer_sk::NUMBER,
+        $1:customer_sk::VARCHAR,     -- Slice 2: SHA-256 hex
         $1:product_id::VARCHAR,
-        $1:product_sk::NUMBER,
+        $1:product_sk::VARCHAR,
         $1:quantity::NUMBER,
         $1:price::NUMBER(10, 2),
         $1:total_amount::NUMBER(14, 2),

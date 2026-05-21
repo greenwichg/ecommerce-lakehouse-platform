@@ -14,13 +14,16 @@ USE ROLE lakehouse_engineer;
 USE DATABASE {{ params.SNOWFLAKE_DATABASE }};
 USE SCHEMA analytics;
 
+-- Slice 2: customer_sk/product_sk types changed from NUMBER(38,0) to
+-- VARCHAR(64) — SHA-256 hex from the SCD2 dim. See libs.scd2 for the
+-- determinism vs identity tradeoff.
 CREATE TABLE IF NOT EXISTS fact_orders (
     order_sk VARCHAR(64) NOT NULL,
     order_id VARCHAR(36) NOT NULL,
     customer_id VARCHAR(36),
-    customer_sk NUMBER(38, 0),
+    customer_sk VARCHAR(64),
     product_id VARCHAR(20),
-    product_sk NUMBER(38, 0),
+    product_sk VARCHAR(64),
     quantity NUMBER(10, 0),
     price NUMBER(10, 2),
     total_amount NUMBER(14, 2),
@@ -29,7 +32,9 @@ CREATE TABLE IF NOT EXISTS fact_orders (
     updated_at TIMESTAMP_TZ,
     _loaded_at TIMESTAMP_TZ,
     _source_batch_id VARCHAR(64),
-    CONSTRAINT pk_fact_orders PRIMARY KEY (order_id)
+    CONSTRAINT pk_fact_orders PRIMARY KEY (order_id),
+    CONSTRAINT fk_fact_orders_customer FOREIGN KEY (customer_sk) REFERENCES dim_customer (customer_sk),
+    CONSTRAINT fk_fact_orders_product FOREIGN KEY (product_sk) REFERENCES dim_product (product_sk)
 )
 CLUSTER BY (DATE_TRUNC('DAY', created_at), status)
 COMMENT

@@ -40,3 +40,16 @@ CREATE STAGE IF NOT EXISTS gold_fact_order_lifecycle_stage
     STORAGE_INTEGRATION = lakehouse_s3_integration
     FILE_FORMAT = gold_parquet_format
     COMMENT = 'External stage for the accumulating-snapshot fact.';
+
+-- Slice 2: stages for the SCD2 dim Parquet exports
+CREATE STAGE IF NOT EXISTS gold_dim_customer_stage
+    URL = 's3://{{ params.LAKEHOUSE_BUCKET }}/gold/dim_customer/'
+    STORAGE_INTEGRATION = lakehouse_s3_integration
+    FILE_FORMAT = gold_parquet_format
+    COMMENT = 'External stage for dim_customer SCD2 history Parquet files.';
+
+CREATE STAGE IF NOT EXISTS gold_dim_product_stage
+    URL = 's3://{{ params.LAKEHOUSE_BUCKET }}/gold/dim_product/'
+    STORAGE_INTEGRATION = lakehouse_s3_integration
+    FILE_FORMAT = gold_parquet_format
+    COMMENT = 'External stage for dim_product SCD2 history Parquet files.';

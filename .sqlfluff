@@ -5,8 +5,13 @@ templater = jinja
 # plus jinja-templated placeholders push past 100 quickly. 120 matches what the
 # Snowflake docs themselves render at.
 max_line_length = 120
-# L034 (col order) and L036 (single col per line) conflict with our preferred style
-exclude_rules = structure.column_order, layout.select_targets
+# Rule exclusions:
+# - structure.column_order: conflicts with our preferred style
+# - layout.select_targets: same
+# - references.keywords (RF04): flags common columns like `name`/`address` as
+#   "soft keywords"; they're not actually reserved in Snowflake and renaming
+#   them would break alignment with the silver/generator schemas.
+exclude_rules = structure.column_order, layout.select_targets, references.keywords
 
 # Jinja context used only for linting. Airflow renders these per-run via
 # SQLExecuteQueryOperator(params=...); schemachange / snowsql can substitute

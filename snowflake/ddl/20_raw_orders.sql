@@ -10,9 +10,9 @@ CREATE TABLE IF NOT EXISTS fact_orders_raw (
     order_sk VARCHAR(64) NOT NULL,
     order_id VARCHAR(36) NOT NULL,
     customer_id VARCHAR(36),
-    customer_sk NUMBER(38, 0),
+    customer_sk VARCHAR(64),    -- Slice 2: SHA-256 hex from SCD2 dim
     product_id VARCHAR(20),
-    product_sk NUMBER(38, 0),
+    product_sk VARCHAR(64),
     quantity NUMBER(10, 0),
     price NUMBER(10, 2),
     total_amount NUMBER(14, 2),
