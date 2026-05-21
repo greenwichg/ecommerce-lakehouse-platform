@@ -83,6 +83,24 @@ module "lambda_validator" {
   tags                = local.common_tags
 }
 
+# S3 → SQS event notification wired here at top level to break the
+# circular dependency (queue's access policy needs the bucket ARN; the
+# bucket notification needs the queue ARN).
+resource "aws_s3_bucket_notification" "raw_to_validator" {
+  bucket = module.s3.bucket_id
+
+  queue {
+    queue_arn     = module.lambda_validator.queue_arn
+    events        = ["s3:ObjectCreated:*"]
+    filter_prefix = "raw/"
+  }
+
+  # The queue policy in modules/lambda_validator must be in place before
+  # S3 tries to publish, otherwise the first put fails. Explicit
+  # depends_on makes the apply order obvious.
+  depends_on = [module.lambda_validator]
+}
+
 # -----------------------------------------------------------------------------
 # Step Functions: human-in-the-loop quarantine review + replay
 # -----------------------------------------------------------------------------

@@ -1,0 +1,5 @@
+# Runtime dependencies — also installed inside the Docker image.
+# This file exists so local tests can `pip install -r requirements.txt`
+# without parsing the Dockerfile.
+pyarrow==15.0.2
+boto3==1.34.69
