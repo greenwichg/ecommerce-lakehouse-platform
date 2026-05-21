@@ -17,6 +17,11 @@ USE SCHEMA analytics;
 -- Slice 2: customer_sk/product_sk types changed from NUMBER(38,0) to
 -- VARCHAR(64) — SHA-256 hex from the SCD2 dim. See libs.scd2 for the
 -- determinism vs identity tradeoff.
+-- Slice 4: `category` denormalised from dim_product (PIT at created_at)
+-- so the materialised view in 60_materialized_views.sql has a single
+-- base table to aggregate. Snowflake MVs can't do joins; denormalisation
+-- here lets us keep the star-schema dims for normalised analytics while
+-- still supporting MV-friendly aggregations.
 CREATE TABLE IF NOT EXISTS fact_orders (
     order_sk VARCHAR(64) NOT NULL,
     order_id VARCHAR(36) NOT NULL,
@@ -24,6 +29,7 @@ CREATE TABLE IF NOT EXISTS fact_orders (
     customer_sk VARCHAR(64),
     product_id VARCHAR(20),
     product_sk VARCHAR(64),
+    category VARCHAR(50),       -- Slice 4: PIT-snapshot of dim_product.category
     quantity NUMBER(10, 0),
     price NUMBER(10, 2),
     total_amount NUMBER(14, 2),

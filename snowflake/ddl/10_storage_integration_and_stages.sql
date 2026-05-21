@@ -60,3 +60,22 @@ CREATE STAGE IF NOT EXISTS gold_fact_sessions_stage
     STORAGE_INTEGRATION = lakehouse_s3_integration
     FILE_FORMAT = gold_parquet_format
     COMMENT = 'External stage for fact_sessions Parquet files. Drives the Snowpipe.';
+
+-- Slice 4: stages for the new sources + customer_ltv mart.
+CREATE STAGE IF NOT EXISTS gold_currency_rates_stage
+    URL = 's3://{{ params.LAKEHOUSE_BUCKET }}/gold/currency_rates/'
+    STORAGE_INTEGRATION = lakehouse_s3_integration
+    FILE_FORMAT = gold_parquet_format
+    COMMENT = 'External stage for currency_rates Parquet (daily reference table).';
+
+CREATE STAGE IF NOT EXISTS gold_wishlist_stage
+    URL = 's3://{{ params.LAKEHOUSE_BUCKET }}/gold/fact_customer_wishlist_product/'
+    STORAGE_INTEGRATION = lakehouse_s3_integration
+    FILE_FORMAT = gold_parquet_format
+    COMMENT = 'External stage for the wishlist factless fact.';
+
+CREATE STAGE IF NOT EXISTS gold_customer_ltv_stage
+    URL = 's3://{{ params.LAKEHOUSE_BUCKET }}/gold/customer_ltv/'
+    STORAGE_INTEGRATION = lakehouse_s3_integration
+    FILE_FORMAT = gold_parquet_format
+    COMMENT = 'External stage for the customer_ltv mart (full-refresh).';

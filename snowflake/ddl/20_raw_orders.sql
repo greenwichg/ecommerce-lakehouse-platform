@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS fact_orders_raw (
     customer_sk VARCHAR(64),    -- Slice 2: SHA-256 hex from SCD2 dim
     product_id VARCHAR(20),
     product_sk VARCHAR(64),
+    category VARCHAR(50),       -- Slice 4: PIT-denormalised from dim_product
     quantity NUMBER(10, 0),
     price NUMBER(10, 2),
     total_amount NUMBER(14, 2),

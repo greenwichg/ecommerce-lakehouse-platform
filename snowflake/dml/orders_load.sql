@@ -16,7 +16,7 @@ USE WAREHOUSE {{ params.SNOWFLAKE_WAREHOUSE }};
 -- 1) Stage fact_orders Parquet -> raw.fact_orders_raw
 COPY INTO raw.fact_orders_raw (
     order_sk, order_id, customer_id, customer_sk, product_id, product_sk,
-    quantity, price, total_amount, status, created_at, updated_at,
+    category, quantity, price, total_amount, status, created_at, updated_at,
     _source_batch_id
 )
 FROM (
@@ -27,6 +27,7 @@ FROM (
         $1:customer_sk::VARCHAR,     -- Slice 2: SHA-256 hex
         $1:product_id::VARCHAR,
         $1:product_sk::VARCHAR,
+        $1:category::VARCHAR,        -- Slice 4: PIT-denormalised
         $1:quantity::NUMBER,
         $1:price::NUMBER(10, 2),
         $1:total_amount::NUMBER(14, 2),
@@ -49,7 +50,7 @@ MERGE INTO analytics.fact_orders AS t
 USING (
     SELECT
         order_sk, order_id, customer_id, customer_sk, product_id, product_sk,
-        quantity, price, total_amount, status, created_at, updated_at,
+        category, quantity, price, total_amount, status, created_at, updated_at,
         _loaded_at, _source_batch_id
     FROM raw.fact_orders_raw
     WHERE _source_batch_id = '{{ params.BATCH_ID }}'
@@ -62,6 +63,7 @@ WHEN MATCHED AND s.updated_at > t.updated_at THEN
         t.customer_sk = s.customer_sk,
         t.product_id = s.product_id,
         t.product_sk = s.product_sk,
+        t.category = s.category,
         t.quantity = s.quantity,
         t.price = s.price,
         t.total_amount = s.total_amount,
@@ -72,11 +74,11 @@ WHEN MATCHED AND s.updated_at > t.updated_at THEN
         t._source_batch_id = s._source_batch_id
 WHEN NOT MATCHED THEN INSERT (
     order_sk, order_id, customer_id, customer_sk, product_id, product_sk,
-    quantity, price, total_amount, status, created_at, updated_at,
+    category, quantity, price, total_amount, status, created_at, updated_at,
     _loaded_at, _source_batch_id
 ) VALUES (
     s.order_sk, s.order_id, s.customer_id, s.customer_sk, s.product_id, s.product_sk,
-    s.quantity, s.price, s.total_amount, s.status, s.created_at, s.updated_at,
+    s.category, s.quantity, s.price, s.total_amount, s.status, s.created_at, s.updated_at,
     s._loaded_at, s._source_batch_id
 );
 
