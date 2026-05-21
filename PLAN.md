@@ -334,3 +334,83 @@ aaca2d1 docs: add README with architecture diagram, status table, and setup guid
 1b30a3e chore: add Python project config, gitignore, and SQL linter setup
 1000bb0 docs: add PLAN.md with vertical-slice implementation plan and clarifying questions
 ```
+
+---
+
+## Session Recap (Slice 2)
+
+### Completed
+
+**Slice 2 — Customers + Products + SCD2 dimensions** (~10 commits, ~30 files added/modified, +57 tests over Slice 1)
+
+| Area | Files | Tests |
+|------|-------|-------|
+| `generators/{customers,products}.py` | 2 | 29 (13 customers + 16 products) |
+| `databricks/libs/scd2.py` (new) | 1 | 10 |
+| `databricks/libs/gold.py` (PIT join, orphan rate) | 1 | 7 added (15 total in test_gold.py) |
+| `databricks/libs/quality.py` (CUSTOMERS_RULES, PRODUCTS_RULES) | 1 | 0 new (existing tests cover Orders; rules are similar) |
+| `databricks/notebooks/silver/silver_{customers,products}.py` | 2 | — |
+| `databricks/notebooks/gold/gold_dim_{customer,product}.py` | 2 | — |
+| `databricks/notebooks/gold/gold_fact_orders.py` (dim-aware) | 1 | — |
+| `snowflake/ddl/{22_raw_dim_sources,40_analytics_dim_customer,41_analytics_dim_product}.sql` | 3 | — |
+| `snowflake/dml/{dim_customer,dim_product}_load.sql` | 2 | — |
+| `snowflake/ddl/clustering_evidence.md` | 1 | — |
+| `snowflake/tests/test_dim_customer_{one_current,no_overlapping_versions}.sql`, `test_fact_orders_orphan_surrogate_rate.sql` | 3 | — |
+| `orchestration/dags/{daily_batch_pipeline,dq_gates}.py` | 2 | 11 new (22 total) |
+| Slice 1 SQL templating fix (`&{X}` → `{{ params.X }}`) | 11 | — |
+
+**Final test count: 157 passing** (up from Slice 1's 100). Lint clean (`ruff`, `black`, `sqlfluff`).
+
+### Deviations from the original plan
+
+1. **Slice 1 SQL templating fix** (commit `9de871f`). My Slice 1 SQL used `&{VAR}` (snowsql syntax) which `sqlfluff` can't parse — every file failed lint with "unparsable section". Caught the moment I ran `sqlfluff lint snowflake/` for the first time in Slice 2 (since it wasn't installed in the Slice 1 environment). Fix: rewrote to `{{ params.VAR }}` (Airflow Jinja, also schemachange-compatible), added jinja context defaults to `.sqlfluff` so the linter substitutes during static checks. Slice 1's own tests continue to pass because Airflow's `SQLExecuteQueryOperator` renders `{{ params.X }}` natively.
+
+2. **sqlfluff `max_line_length` raised 100 → 120**. SQL with fully-qualified identifiers + jinja placeholders pushes past 100 routinely; 120 is what Snowflake's own docs use.
+
+3. **`references.keywords` (RF04) excluded from sqlfluff**. Flags common columns like `name`/`address` as "soft keywords" — they're not actually reserved in Snowflake, and renaming would diverge from the silver schemas.
+
+4. **Conftest: `airflow db migrate` once per AIRFLOW_HOME**. Slice 1 had `Variable.get(...)` calls at DAG module-load time that worked because the test environment happened to have a previously-initialised AIRFLOW_HOME. Slice 2 added more `Variable.get` calls (for `databricks_job_*` IDs), and a fresh AIRFLOW_HOME exposed the missing-table error. Fix: subprocess `airflow db migrate` guarded by a sentinel file in `orchestration/tests/conftest.py`.
+
+5. **`sla=None` on mapped bronze task**. Airflow rejects per-task SLAs on `.expand()` mapped operators. Override `sla=None` and rely on the DAG-level 4h SLA covering end-to-end.
+
+6. **Clustering decision documented in `snowflake/ddl/clustering_evidence.md`** (per your pushback). `dim_customer` clusters on `(customer_id)` alone — the dashboard's hot path is "current row for customer_id X", which a single-column cluster serves in one hop with micro-partition pruning on `is_current`. Rejected `(customer_id, effective_from)` because the PIT lookup happens upstream in Databricks gold (not in Snowflake) so historical PIT queries are debugging-frequency. Before/after measurement procedure documented; concrete numbers marked TBD pending the Slice 5 cloud deploy.
+
+7. **`fact_orders` SK type change BIGINT → VARCHAR(64)**. Slice 1 reserved `customer_sk`/`product_sk` as NULL `BIGINT` placeholders; Slice 2 fills them with the SHA-256-derived surrogate from `apply_scd2_merge`. Type now matches `order_sk`. Documented in `libs.scd2.compute_surrogate` docstring (deterministic-across-runs vs identity-INT tradeoff: at our volume Delta's dictionary encoding compresses VARCHAR(64) sk down to ~the same footprint as BIGINT).
+
+8. **Orphan-rate gate in two places**: (a) gold notebook raises `RuntimeError` if rate exceeds `data_quality.orphan_surrogate_rate_pct` (fails the Databricks job → fails the Airflow task → fires SNS), and (b) `dq_orphan_fact_orders` Airflow task checks the same threshold against the Snowflake-side `fact_orders` after load (catches dim-load races that the gold-side check can't see).
+
+### sys.path verification (per Q3)
+
+The Slice 1 `conftest.py` eager-import strategy held up cleanly — no further hacks needed. The orchestration test conftest added `airflow db migrate` (a database-layer fix, not a sys.path band-aid) which is orthogonal. **Recommendation for Slice 3: stay on this layout**; switch to `pip install -e .` only if a future slice needs cross-package imports that sys.path manipulation can't cleanly express.
+
+### Open items for Slice 3
+
+- Clickstream generator (JSON, ~50k/day, sessionization triggers)
+- `silver.fact_sessions` via 30-min inactivity windowing
+- `hourly_clickstream_pipeline.py` DAG with `Dataset` triggering the daily DAG
+- Snowpipe + Streams + Tasks demo
+- `SYSTEM$CLUSTERING_INFORMATION` numbers for `dim_customer` (deferred to Slice 5 when real Snowflake is available)
+
+### Tests + lint status at session end
+
+```
+pytest          → 157 passed (was 100)
+ruff check .    → All checks passed!
+black --check . → All clean
+sqlfluff lint snowflake/ → All Finished! (0 violations)
+```
+
+### Commit log (Slice 2)
+
+```
+ae27960 feat(orchestration): dynamic task mapping for bronze + dim/silver/gold tasks
+3a61ef1 feat(snowflake): SCD2 dim_customer + dim_product with full load chain
+0ceecc6 feat(databricks): gold_fact_orders reads dims for PIT surrogate binding
+1d5b4eb feat(databricks): silver + gold SCD2 notebooks for customers and products
+3b2c0b6 feat(databricks): point-in-time SCD2 join for fact_orders + orphan rate
+df86b8a feat(libs): SCD2 MERGE primitive with deterministic SHA-256 surrogates + tests
+8b636fc feat(generators): products generator with deterministic SCD2 timeline + tests
+477a9cf feat(generators): customers generator with deterministic SCD2 timeline + tests
+7ac3e47 feat(orchestration): promote DQ thresholds to config + add orphan-rate gate
+9de871f fix(snowflake): adopt Airflow-jinja placeholders + raise sqlfluff line length
+```

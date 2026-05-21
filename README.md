@@ -18,7 +18,7 @@ next. See [`PLAN.md`](PLAN.md) for the slice plan.
 |-------|-------|--------|
 | 0 | Project scaffolding, CI lint, layered configs | ✅ done |
 | 1 | **Orders** end-to-end: generator → S3 → Bronze → Silver → Gold → Snowflake → Airflow → tests | ✅ done |
-| 2 | Customers + Products (SCD2 dimensions) | ⏳ pending |
+| 2 | **Customers + Products** (SCD2 dimensions, PIT-correct surrogate joins) | ✅ done |
 | 3 | Clickstream + hourly DAG + sessionization | ⏳ pending |
 | 4 | Currency rates + remaining marts | ⏳ pending |
 | 5 | Infra hardening + DR + weekly maintenance DAG | ⏳ pending |
