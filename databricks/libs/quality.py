@@ -109,6 +109,36 @@ CLICKSTREAM_RULES: tuple[Rule, ...] = (
 )
 
 
+# Currency rates DQ rules (Slice 4).
+CURRENCY_RATES_RULES: tuple[Rule, ...] = (
+    Rule("rate_date_not_null", "rate_date IS NOT NULL"),
+    Rule("rate_date_not_future", "rate_date <= current_date() + INTERVAL 1 DAY"),
+    Rule("base_currency_known", "base_currency = 'USD'"),
+    Rule("target_currency_not_null", "target_currency IS NOT NULL"),
+    Rule("rate_positive", "rate > 0"),
+    # _source provenance: must be 'api' or 'simulated'. Anything else
+    # means the generator emitted unexpected data or someone bypassed it.
+    Rule(
+        "source_known",
+        "_source IN ('api', 'simulated')",
+    ),
+)
+
+
+# Wishlist events DQ rules (Slice 4). customer_id is REQUIRED (wishlist
+# is an authenticated-only feature in this model).
+WISHLIST_RULES: tuple[Rule, ...] = (
+    Rule("wishlist_event_id_not_null", "wishlist_event_id IS NOT NULL"),
+    Rule("customer_id_not_null", "customer_id IS NOT NULL"),
+    Rule("product_id_not_null", "product_id IS NOT NULL"),
+    Rule("added_at_not_future", "added_at <= current_timestamp() + INTERVAL 1 HOUR"),
+    Rule(
+        "source_known",
+        "source IS NULL OR source IN ('/products', '/search', '/recommendations', '/cart', '/email-campaign')",
+    ),
+)
+
+
 _QUARANTINE_COL = "_quarantine_reason"
 
 
