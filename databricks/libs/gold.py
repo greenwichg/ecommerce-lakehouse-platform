@@ -1,12 +1,10 @@
 """Gold layer transformations.
 
-Two Gold models in Slice 1:
+Two Gold models:
 
-- ``fact_orders``: transactional grain. One row per order, latest state from
-  silver. Surrogate-key columns (``customer_sk``, ``product_sk``) are
-  reserved as NULL placeholders until Slice 2 lands ``dim_customer`` and
-  ``dim_product``; the structure stays stable across slices so downstream
-  consumers don't break.
+- ``fact_orders``: transactional grain. One row per order, latest state
+  from silver. As of Slice 2, ``customer_sk`` and ``product_sk`` are
+  populated via point-in-time correct SCD2 joins (see ``pit_join_scd2``).
 - ``fact_order_lifecycle``: accumulating snapshot. One row per order
   carrying every milestone the order has reached (placed/paid/shipped/
   delivered/cancelled) plus computed durations between milestones. When
@@ -40,22 +38,93 @@ def _duration_days(start_col: str, end_col: str) -> Column:
     )
 
 
-def build_fact_orders(silver_orders: DataFrame) -> DataFrame:
+def pit_join_scd2(
+    fact_df: DataFrame,
+    dim_df: DataFrame,
+    natural_key: str,
+    sk_col: str,
+    fact_timestamp_col: str = "created_at",
+) -> DataFrame:
+    """Point-in-time correct SCD2 join.
+
+    Binds each fact row to the dim version that was *valid at the order's
+    placement time*. Returns the fact DataFrame with one new column
+    (``sk_col``) — the surrogate of the matching dim version, or NULL if
+    no matching version exists (LEFT join — orphan facts are surfaced for
+    a downstream DQ check, not silently dropped).
+
+    Why ``created_at`` (the order's placed_at), not ``updated_at`` or load-
+    time:
+
+      - ``created_at``: binds to the dim version current WHEN THE ORDER
+        WAS PLACED. This is the standard dimensional-modelling semantic —
+        "which customer placed this order? — the one at the address they
+        had at placement". A late status update that arrives months later
+        still resolves to the customer-at-order-time.
+      - ``updated_at``: binds to the dim version current when the order's
+        STATUS last changed. Loses meaning when an order pays 3 days after
+        placement but the customer moved in between — the fact would show
+        the new address as if they ordered from there.
+      - ``current_timestamp() / load_time``: ignores history. Fine for
+        slowly-changing references where history doesn't matter (e.g.
+        currency conversion); wrong for entities where address-at-order
+        is the correct semantic.
+
+    Broadcast hint: ``broadcast(dim_df)`` — dim_customer at ~10k natural
+    keys × ~10 SCD2 versions across a few years = O(100k) rows,
+    comfortably under Spark's default 10MB broadcast threshold once
+    encoded.
+    """
+    sel_dim = dim_df.select(
+        F.col(natural_key).alias("__dim_nk"),
+        F.col(sk_col).alias("__dim_sk"),
+        F.col("effective_from").alias("__dim_from"),
+        F.col("effective_to").alias("__dim_to"),
+    )
+    return (
+        fact_df.alias("f")
+        .join(
+            F.broadcast(sel_dim),
+            (F.col(f"f.{natural_key}") == F.col("__dim_nk"))
+            & (F.col(f"f.{fact_timestamp_col}") >= F.col("__dim_from"))
+            & (F.col(f"f.{fact_timestamp_col}") < F.col("__dim_to")),
+            "left",
+        )
+        .withColumn(sk_col, F.col("__dim_sk"))
+        .drop("__dim_nk", "__dim_sk", "__dim_from", "__dim_to")
+    )
+
+
+def build_fact_orders(
+    silver_orders: DataFrame,
+    dim_customer: DataFrame,
+    dim_product: DataFrame,
+) -> DataFrame:
     """Build the transactional-grain fact_orders DataFrame.
+
+    Args:
+        silver_orders: deduplicated silver orders (one row per order_id).
+        dim_customer: SCD2 customer dim with ``customer_id``,
+            ``customer_sk``, ``effective_from``, ``effective_to``.
+        dim_product: SCD2 product dim with the analogous columns.
 
     Adds:
       - ``order_sk``: deterministic surrogate via sha2(order_id, 256)
-      - ``customer_sk`` / ``product_sk``: NULL placeholders (Slice 2)
+      - ``customer_sk`` / ``product_sk``: bound via point-in-time SCD2
+        join on ``created_at`` (the order's placement timestamp).
+        VARCHAR(64) (SHA-256 hex) — matches dim surrogate type.
       - ``total_amount``: ``quantity * price``
-    Carries the silver natural keys, status, and the canonical timestamps.
+
+    Slice 1 → Slice 2 schema change: ``customer_sk`` / ``product_sk`` types
+    flip from BIGINT NULL placeholder to VARCHAR(64). Tests construct dims
+    via the ``_single_version_dim`` helper to keep Slice 1 assertions
+    intact while exercising the new join path.
     """
-    return silver_orders.select(
+    base = silver_orders.select(
         F.sha2(F.col("order_id"), 256).alias("order_sk"),
         F.col("order_id"),
         F.col("customer_id"),
-        F.lit(None).cast("long").alias("customer_sk"),
         F.col("product_id"),
-        F.lit(None).cast("long").alias("product_sk"),
         F.col("quantity"),
         F.col("price"),
         (F.col("quantity") * F.col("price")).alias("total_amount"),
@@ -63,6 +132,38 @@ def build_fact_orders(silver_orders: DataFrame) -> DataFrame:
         F.col("created_at"),
         F.col("updated_at"),
     )
+    with_customer = pit_join_scd2(base, dim_customer, "customer_id", "customer_sk", "created_at")
+    with_both = pit_join_scd2(with_customer, dim_product, "product_id", "product_sk", "created_at")
+
+    # Re-order so SK columns sit next to the natural key they shadow.
+    return with_both.select(
+        "order_sk",
+        "order_id",
+        "customer_id",
+        "customer_sk",
+        "product_id",
+        "product_sk",
+        "quantity",
+        "price",
+        "total_amount",
+        "status",
+        "created_at",
+        "updated_at",
+    )
+
+
+def orphan_surrogate_rate(fact_df: DataFrame, sk_cols: Sequence[str]) -> float:
+    """Compute the % of fact rows where any ``sk_cols`` is NULL.
+
+    Returns 0.0 on an empty DataFrame (vacuous pass — matches the
+    Snowflake-side gate behavior in dq_gates).
+    """
+    total = fact_df.count()
+    if total == 0:
+        return 0.0
+    null_pred = " OR ".join(f"{c} IS NULL" for c in sk_cols)
+    orphans = fact_df.filter(null_pred).count()
+    return orphans / total * 100.0
 
 
 def build_fact_order_lifecycle(silver_orders: DataFrame) -> DataFrame:

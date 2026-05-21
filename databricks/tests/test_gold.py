@@ -15,9 +15,12 @@ from libs.gold import (
     build_fact_orders,
     ensure_gold_table,
     merge_into_gold,
+    orphan_surrogate_rate,
+    pit_join_scd2,
 )
-from pyspark.sql import SparkSession
+from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.types import (
+    BooleanType,
     DoubleType,
     IntegerType,
     StringType,
@@ -25,6 +28,58 @@ from pyspark.sql.types import (
     StructType,
     TimestampType,
 )
+
+# --- SCD2 test helpers ---------------------------------------------------
+# build_fact_orders now requires dim_customer and dim_product. Tests that
+# don't care about SCD2 history use _single_version_dim to construct a
+# minimal dim covering [epoch, year=3000) so the PIT join always matches.
+
+
+_EPOCH = dt.datetime(1970, 1, 1)
+_FAR_FUTURE = dt.datetime(3000, 1, 1)
+
+
+def _single_version_dim(
+    spark: SparkSession,
+    natural_keys: list[str],
+    natural_key_col: str,
+    sk_col: str,
+    extra_cols: dict[str, list] | None = None,
+) -> DataFrame:
+    """Build a one-version-per-key dim DataFrame spanning [epoch, far-future).
+
+    Returns the SCD2-shaped DF (sk_col, natural_key_col, effective_from,
+    effective_to, is_current). Used by tests that need the SCD2 join to
+    "always match" — i.e. exercise the post-Slice-1 contract without
+    needing real version history.
+    """
+    rows = []
+    extras = extra_cols or {}
+    for i, nk in enumerate(natural_keys):
+        row = {
+            sk_col: f"sk-{i:04d}",
+            natural_key_col: nk,
+            "effective_from": _EPOCH,
+            "effective_to": _FAR_FUTURE,
+            "is_current": True,
+        }
+        for col, vals in extras.items():
+            row[col] = vals[i]
+        rows.append(row)
+    fields = [
+        StructField(sk_col, StringType(), nullable=False),
+        StructField(natural_key_col, StringType(), nullable=False),
+    ]
+    for col in extras:
+        fields.append(StructField(col, StringType(), nullable=True))
+    fields.extend(
+        [
+            StructField("effective_from", TimestampType(), nullable=False),
+            StructField("effective_to", TimestampType(), nullable=False),
+            StructField("is_current", BooleanType(), nullable=False),
+        ]
+    )
+    return spark.createDataFrame(rows, StructType(fields))
 
 
 def _silver_schema() -> StructType:
@@ -58,7 +113,9 @@ def test_fact_orders_columns_and_total_amount(spark: SparkSession) -> None:
         ],
         schema=_silver_schema(),
     )
-    fact = build_fact_orders(silver)
+    dim_c = _single_version_dim(spark, ["c1"], "customer_id", "customer_sk")
+    dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk")
+    fact = build_fact_orders(silver, dim_c, dim_p)
     expected = {
         "order_sk", "order_id", "customer_id", "customer_sk",
         "product_id", "product_sk", "quantity", "price", "total_amount",
@@ -67,8 +124,9 @@ def test_fact_orders_columns_and_total_amount(spark: SparkSession) -> None:
     assert set(fact.columns) == expected
     row = fact.first()
     assert row["total_amount"] == 20.0
-    assert row["customer_sk"] is None  # placeholder until Slice 2
-    assert row["product_sk"] is None
+    # SK populated via PIT join — no longer NULL post-Slice 2.
+    assert row["customer_sk"] == "sk-0000"
+    assert row["product_sk"] == "sk-0000"
     assert row["order_sk"] is not None
     assert len(row["order_sk"]) == 64  # sha256 hex
 
@@ -80,8 +138,10 @@ def test_order_sk_is_deterministic(spark: SparkSession) -> None:
          dt.datetime(2025, 5, 1), None, None, None, None, dt.datetime(2025, 5, 1))
     ]
     df = spark.createDataFrame(rows, schema=_silver_schema())
-    a = build_fact_orders(df).first()["order_sk"]
-    b = build_fact_orders(df).first()["order_sk"]
+    dim_c = _single_version_dim(spark, ["c1"], "customer_id", "customer_sk")
+    dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk")
+    a = build_fact_orders(df, dim_c, dim_p).first()["order_sk"]
+    b = build_fact_orders(df, dim_c, dim_p).first()["order_sk"]
     assert a == b
 
 
@@ -211,8 +271,10 @@ def test_merge_fact_orders_inserts_then_updates(spark: SparkSession, tmp_path: P
         ],
         schema=_silver_schema(),
     )
-    ensure_gold_table(spark, target, build_fact_orders(seed))
-    merge_into_gold(spark, build_fact_orders(seed), target, ["order_id"])
+    dim_c = _single_version_dim(spark, ["c1"], "customer_id", "customer_sk")
+    dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk")
+    ensure_gold_table(spark, target, build_fact_orders(seed, dim_c, dim_p))
+    merge_into_gold(spark, build_fact_orders(seed, dim_c, dim_p), target, ["order_id"])
 
     # Update to paid
     paid = spark.createDataFrame(
@@ -225,7 +287,7 @@ def test_merge_fact_orders_inserts_then_updates(spark: SparkSession, tmp_path: P
         ],
         schema=_silver_schema(),
     )
-    merge_into_gold(spark, build_fact_orders(paid), target, ["order_id"])
+    merge_into_gold(spark, build_fact_orders(paid, dim_c, dim_p), target, ["order_id"])
 
     back = spark.read.format("delta").load(target).collect()
     assert len(back) == 1
@@ -244,8 +306,161 @@ def test_ensure_gold_table_idempotent(spark: SparkSession, tmp_path: Path) -> No
         ],
         schema=_silver_schema(),
     )
-    fact = build_fact_orders(seed)
+    dim_c = _single_version_dim(spark, ["c1"], "customer_id", "customer_sk")
+    dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk")
+    fact = build_fact_orders(seed, dim_c, dim_p)
     ensure_gold_table(spark, target, fact)
     ensure_gold_table(spark, target, fact)  # second call is a no-op
     # Table exists and is still empty
     assert spark.read.format("delta").load(target).count() == 0
+
+
+# --- PIT join + orphan rate tests (new in Slice 2) -------------------------
+
+
+def _scd2_dim(
+    spark: SparkSession,
+    rows: list[tuple],
+) -> DataFrame:
+    """Construct an SCD2-shaped dim DF from explicit (sk, nk, ef, et, is_current) tuples."""
+    schema = StructType(
+        [
+            StructField("customer_sk", StringType(), nullable=False),
+            StructField("customer_id", StringType(), nullable=False),
+            StructField("effective_from", TimestampType(), nullable=False),
+            StructField("effective_to", TimestampType(), nullable=False),
+            StructField("is_current", BooleanType(), nullable=False),
+        ]
+    )
+    return spark.createDataFrame(rows, schema)
+
+
+def test_pit_join_binds_to_version_valid_at_fact_timestamp(spark: SparkSession) -> None:
+    """Two versions of a customer: order at T1 binds to v1, order at T3 binds to v2."""
+    dim = _scd2_dim(
+        spark,
+        [
+            ("sk-v1", "c1", dt.datetime(2025, 1, 1), dt.datetime(2025, 6, 1), False),
+            ("sk-v2", "c1", dt.datetime(2025, 6, 1), dt.datetime(3000, 1, 1), True),
+        ],
+    )
+    fact = spark.createDataFrame(
+        [
+            ("o1", "c1", dt.datetime(2025, 3, 15)),  # before v2 starts -> v1
+            ("o2", "c1", dt.datetime(2025, 9, 15)),  # after v2 starts -> v2
+        ],
+        ["order_id", "customer_id", "created_at"],
+    )
+    joined = pit_join_scd2(fact, dim, "customer_id", "customer_sk", "created_at").collect()
+    by_order = {r["order_id"]: r["customer_sk"] for r in joined}
+    assert by_order["o1"] == "sk-v1"
+    assert by_order["o2"] == "sk-v2"
+
+
+def test_pit_join_customer_changes_between_placement_and_silver_merge(
+    spark: SparkSession,
+) -> None:
+    """User-flagged edge case: order placed at T1, customer update at T2,
+    silver MERGE happens at T3, with T1 < T2 < T3. The fact's customer_sk
+    must bind to the T1 customer version (the one valid at placement),
+    NOT to the T2 version (which only became current after placement)."""
+    t1 = dt.datetime(2025, 5, 1, 10)   # order placed
+    t2 = dt.datetime(2025, 5, 1, 14)   # customer changes address
+    t3 = dt.datetime(2025, 5, 2, 8)    # silver MERGE runs
+
+    dim = _scd2_dim(
+        spark,
+        [
+            ("sk-v1", "c1", dt.datetime(2025, 1, 1), t2, False),  # v1 valid at T1
+            ("sk-v2", "c1", t2, dt.datetime(3000, 1, 1), True),    # v2 starts at T2
+        ],
+    )
+    # Fact carries created_at = T1 (placement time) and updated_at = T3
+    # (last silver MERGE time). The PIT join must use created_at, not
+    # updated_at, to bind correctly.
+    fact = spark.createDataFrame(
+        [("o1", "c1", t1, t3)],
+        ["order_id", "customer_id", "created_at", "updated_at"],
+    )
+    joined = pit_join_scd2(fact, dim, "customer_id", "customer_sk", "created_at").first()
+    assert joined["customer_sk"] == "sk-v1", (
+        "must bind to v1 (current at placement), not v2 (current at MERGE)"
+    )
+
+
+def test_pit_join_orphan_yields_null_sk(spark: SparkSession) -> None:
+    """A fact row for a customer absent from the dim retains NULL sk
+    (LEFT join semantic) rather than being dropped."""
+    dim = _scd2_dim(
+        spark,
+        [("sk-v1", "c1", dt.datetime(2025, 1, 1), dt.datetime(3000, 1, 1), True)],
+    )
+    fact = spark.createDataFrame(
+        [
+            ("o1", "c1", dt.datetime(2025, 5, 1)),
+            ("o2", "c_missing", dt.datetime(2025, 5, 1)),
+        ],
+        ["order_id", "customer_id", "created_at"],
+    )
+    joined = pit_join_scd2(fact, dim, "customer_id", "customer_sk", "created_at").collect()
+    by_order = {r["order_id"]: r["customer_sk"] for r in joined}
+    assert by_order["o1"] == "sk-v1"
+    assert by_order["o2"] is None
+    assert len(joined) == 2  # NOT dropped
+
+
+def test_orphan_rate_zero_when_all_resolved(spark: SparkSession) -> None:
+    fact = spark.createDataFrame(
+        [("sk1", "sk2"), ("sk3", "sk4")],
+        ["customer_sk", "product_sk"],
+    )
+    assert orphan_surrogate_rate(fact, ["customer_sk", "product_sk"]) == 0.0
+
+
+def test_orphan_rate_counts_any_null_column(spark: SparkSession) -> None:
+    """A row with EITHER customer_sk OR product_sk NULL counts as one orphan."""
+    fact = spark.createDataFrame(
+        [
+            ("sk1", "sk2"),  # ok
+            (None, "sk4"),   # orphan
+            ("sk3", None),   # orphan
+            (None, None),    # orphan (counts once, not twice)
+        ],
+        ["customer_sk", "product_sk"],
+    )
+    rate = orphan_surrogate_rate(fact, ["customer_sk", "product_sk"])
+    assert rate == 75.0  # 3 of 4
+
+
+def test_orphan_rate_empty_df_is_vacuous_zero(spark: SparkSession) -> None:
+    fact = spark.createDataFrame(
+        [],
+        StructType(
+            [
+                StructField("customer_sk", StringType()),
+                StructField("product_sk", StringType()),
+            ]
+        ),
+    )
+    assert orphan_surrogate_rate(fact, ["customer_sk", "product_sk"]) == 0.0
+
+
+def test_build_fact_orders_orphan_customer_yields_null_sk(spark: SparkSession) -> None:
+    """End-to-end: a silver order referencing a customer absent from dim_customer
+    flows through as fact row with customer_sk = NULL (caught later by
+    check_orphan_surrogate_rate in the daily DAG)."""
+    silver = spark.createDataFrame(
+        [
+            (
+                "o1", "c_missing", "p1", 1, 9.99, "placed",
+                dt.datetime(2025, 5, 1, 10), None, None, None, None,
+                dt.datetime(2025, 5, 1, 10),
+            )
+        ],
+        schema=_silver_schema(),
+    )
+    dim_c = _single_version_dim(spark, ["c_present"], "customer_id", "customer_sk")
+    dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk")
+    fact = build_fact_orders(silver, dim_c, dim_p).first()
+    assert fact["customer_sk"] is None
+    assert fact["product_sk"] == "sk-0000"  # product still resolved
