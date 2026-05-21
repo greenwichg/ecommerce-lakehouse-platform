@@ -1,0 +1,132 @@
+{
+  "widgets": [
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 0,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          ["AWS/Lambda", "Invocations", "FunctionName", "${name_prefix}-file-validator"],
+          [".", "Errors", ".", "."],
+          [".", "Throttles", ".", "."]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "${region}",
+        "title": "File validator Lambda — invocations / errors / throttles",
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 0,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          ["Lakehouse/Validator", "QuarantineCount"],
+          [".", "ValidationSuccess"],
+          [".", "ValidationWarning"]
+        ],
+        "view": "timeSeries",
+        "stacked": true,
+        "region": "${region}",
+        "title": "Validation outcomes (Slice 5)",
+        "period": 3600
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 6,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          ["Lakehouse/Pipeline", "CurrencySimulatedPct"]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "${region}",
+        "title": "Currency API fallback rate (Slice 4 _source provenance)",
+        "yAxis": {
+          "left": {
+            "min": 0,
+            "max": 100
+          }
+        },
+        "annotations": {
+          "horizontal": [
+            {
+              "value": 50,
+              "label": "Hard-fail threshold",
+              "color": "#d62728"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 6,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          ["AWS/States", "ExecutionsStarted", "StateMachineArn", "arn:aws:states:${region}:*:stateMachine:${name_prefix}-quarantine-review-replay"],
+          [".", "ExecutionsSucceeded", ".", "."],
+          [".", "ExecutionsFailed", ".", "."],
+          [".", "ExecutionsTimedOut", ".", "."]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "${region}",
+        "title": "Step Functions quarantine-replay executions",
+        "period": 3600
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 12,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          ["AWS/S3", "BucketSizeBytes", "BucketName", "${bucket_name}", "StorageType", "StandardStorage"],
+          [".", ".", ".", ".", ".", "GlacierStorage"],
+          [".", "NumberOfObjects", ".", ".", ".", "AllStorageTypes"]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "${region}",
+        "title": "S3 storage — standard vs Glacier (raw lifecycle)",
+        "period": 86400
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 12,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          ["Lakehouse/Pipeline", "DAGRunSuccess", "DagId", "daily_batch_pipeline"],
+          [".", "DAGRunFailure", ".", "."],
+          [".", ".", "DagId", "hourly_clickstream_pipeline"],
+          [".", "DAGRunFailure", ".", "."]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "${region}",
+        "title": "Airflow DAG outcomes (emitted by sns_failure_callback)",
+        "period": 86400
+      }
+    }
+  ]
+}
