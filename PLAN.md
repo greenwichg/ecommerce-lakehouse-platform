@@ -545,8 +545,8 @@ e2fc093 feat(snowflake): currency + wishlist + customer_ltv + MV + category deno
 
 ### Completed
 
-**Slice 5 — Infrastructure hardening** (~8 commits, ~50 new files across
-Terraform / Lambda / Snowflake / Airflow, +43 tests over Slice 4)
+**Slice 5 — Infrastructure hardening** (~10 commits, ~50 new files across
+Terraform / Lambda / Snowflake / Airflow, +42 tests over Slice 4)
 
 | Area | Files | New tests |
 |------|-------|-----------|
@@ -558,9 +558,12 @@ Terraform / Lambda / Snowflake / Airflow, +43 tests over Slice 4)
 | `orchestration/dags/weekly_maintenance.py` + tests | 1 | 8 (cadence, layer coverage, ordering) |
 | `docs/architecture.md` + `docs/runbook.md` Slice 5 sections | 2 | — |
 
-**Final test count: 313 passing** (was 270). All `terraform fmt -check`
-passes; live `terraform validate` blocked by sandbox network (no
-provider registry).
+**Final test count: 288 passing** (was 246 at end of Slice 4 — +42 from
+the new infra tests: 16 validator handler, 9 quarantine helper handler,
+8 ASL JSON static validation, 8 weekly maintenance DAG, 1 currency
+JSONL clickstream regression added during the validator work). All
+`terraform fmt -check` passes; live `terraform validate` blocked by
+sandbox network (no provider registry).
 
 ### Deviations from the original plan
 
@@ -633,7 +636,7 @@ the Snowflake external-ID two-apply dance.
 ### Tests + lint status at session end
 
 ```
-pytest                                → 313 passed (was 270)
+pytest                                → 288 passed (was 246 at end of Slice 4)
 terraform fmt -check -recursive       → All formatted
 terraform validate                    → blocked: sandbox cannot reach registry.terraform.io
 ruff check .                          → All checks passed!
@@ -655,6 +658,8 @@ sqlfluff lint snowflake/              → All Finished! (0 violations)
 ### Commit log (Slice 5)
 
 ```
+e9404c1 style: ruff + black + sqlfluff cleanup across repo
+b34eb13 fix(tests)+style+docs: handler module collision, lint, Slice 5 docs
 a1b8581 style(infra): apply terraform fmt across all modules
 d0f2c52 feat(snowflake+orchestration): resource monitors + weekly maintenance DAG
 ac60da4 feat(iam+infra): dedicated helper Lambda role + airflow-api-creds secret
