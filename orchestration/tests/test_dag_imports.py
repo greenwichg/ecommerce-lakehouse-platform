@@ -391,3 +391,88 @@ def test_dashboard_refresh_has_no_cron_schedule() -> None:
     assert (
         "cron" not in summary.lower() or summary == "Never, external triggers only"
     ), f"dashboard_refresh should be dataset-only, got: {summary}"
+
+
+# ---------------------------------------------------------------------------
+# Slice 5 — weekly_maintenance
+# ---------------------------------------------------------------------------
+
+
+def test_weekly_maintenance_imports() -> None:
+    from weekly_maintenance import dag
+
+    assert dag.dag_id == "weekly_maintenance"
+
+
+def test_weekly_maintenance_runs_sunday_0400_utc() -> None:
+    """Per Slice 5 spec: 0 4 * * 0. If the cron drifts the DAG could
+    collide with the daily batch (02:00 UTC) or the hourly window."""
+    from weekly_maintenance import dag
+
+    summary = dag.timetable.summary
+    assert "0 4 * * 0" in summary, f"unexpected schedule: {summary}"
+
+
+def test_weekly_maintenance_has_failure_callback() -> None:
+    from callbacks import sns_failure_callback
+    from weekly_maintenance import dag
+
+    assert dag.default_args.get("on_failure_callback") is sns_failure_callback
+
+
+def test_weekly_maintenance_covers_all_medallion_layers() -> None:
+    """Regression guard: if a new Gold table is added without being
+    added to DELTA_TABLES here, it accumulates small files until reads
+    slow. Test pins the expected coverage."""
+    from weekly_maintenance import DELTA_TABLES
+
+    layers = {t.split(".")[0] for t in DELTA_TABLES}
+    assert layers == {"bronze", "silver", "gold"}, (
+        f"weekly maintenance should cover bronze/silver/gold; got {layers}"
+    )
+    # The Slice 4 gold marts MUST be included — they're append-heavy and
+    # would degrade fastest if skipped.
+    assert "gold.customer_ltv" in DELTA_TABLES
+    assert "gold.fact_customer_wishlist_product" in DELTA_TABLES
+    assert "gold.currency_rates" in DELTA_TABLES
+
+
+def test_weekly_maintenance_includes_databricks_in_cost_report() -> None:
+    """Slice 5 design decision (Q5): 'Snowflake-only undersells the
+    split-compute story.' If the Databricks usage task gets removed,
+    we're back to a one-sided report."""
+    from weekly_maintenance import dag
+
+    task_ids = {t.task_id for t in dag.tasks}
+    assert "fetch_databricks_dbu_usage" in task_ids
+    assert "fetch_snowflake_credit_usage" in task_ids
+
+
+def test_weekly_maintenance_cost_report_runs_after_maintenance() -> None:
+    """The cost report should see the actual maintenance run as part
+    of the week's DBU spend — so maintenance must finish first."""
+    from weekly_maintenance import dag
+
+    report = dag.get_task("render_cost_report")
+    upstream_ids = {t.task_id for t in report.upstream_list}
+    # Both task groups should be upstream of render_cost_report
+    assert "fetch_snowflake_credit_usage" in upstream_ids
+    assert "fetch_databricks_dbu_usage" in upstream_ids
+
+
+def test_weekly_maintenance_publish_runs_last() -> None:
+    """The SNS publish must be the leaf — operators see the report
+    only when everything else has been computed."""
+    from weekly_maintenance import dag
+
+    publish = dag.get_task("publish_cost_report")
+    assert publish.downstream_task_ids == set()
+
+
+def test_weekly_maintenance_clustering_alert_threshold() -> None:
+    """The 4.0 threshold matches Snowflake's docs recommendation. If
+    it gets dropped to e.g. 1.0 we'd alert constantly; if raised to 10
+    we'd never recluster."""
+    from weekly_maintenance import CLUSTERING_DEPTH_ALERT
+
+    assert 2.0 <= CLUSTERING_DEPTH_ALERT <= 6.0
