@@ -89,6 +89,26 @@ PRODUCTS_RULES: tuple[Rule, ...] = (
 )
 
 
+# Clickstream DQ rules (Slice 3). Anonymous customer_id is *valid* — that's
+# the whole point of anonymous sessions — so it's not in the rule set.
+# raw session_id IS required; without it we can't sessionize.
+CLICKSTREAM_RULES: tuple[Rule, ...] = (
+    Rule("event_id_not_null", "event_id IS NOT NULL"),
+    Rule("session_id_not_null", "session_id IS NOT NULL"),
+    Rule(
+        "event_type_known",
+        "event_type IN ('page_view', 'add_to_cart', 'checkout', 'purchase')",
+    ),
+    Rule("page_url_not_null", "page_url IS NOT NULL"),
+    Rule("event_ts_not_future", "event_ts <= current_timestamp() + INTERVAL 1 HOUR"),
+    # device is bounded; user_agent is freeform so no rule
+    Rule(
+        "device_known",
+        "device IS NULL OR device IN ('desktop', 'mobile', 'tablet')",
+    ),
+)
+
+
 _QUARANTINE_COL = "_quarantine_reason"
 
 
