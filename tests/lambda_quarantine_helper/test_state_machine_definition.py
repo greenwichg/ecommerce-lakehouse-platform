@@ -14,11 +14,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 _DEFINITION_PATH = (
     Path(__file__).resolve().parent.parent.parent
-    / "infrastructure" / "terraform" / "modules" / "step_functions"
+    / "infrastructure"
+    / "terraform"
+    / "modules"
+    / "step_functions"
     / "definition.asl.json"
 )
 
@@ -41,14 +42,14 @@ def test_all_next_targets_exist() -> None:
     state_names = set(d["States"].keys())
     for name, state in d["States"].items():
         if "Next" in state:
-            assert state["Next"] in state_names, (
-                f"State {name} → Next={state['Next']} doesn't exist"
-            )
+            assert (
+                state["Next"] in state_names
+            ), f"State {name} → Next={state['Next']} doesn't exist"
         if "Choices" in state:
             for choice in state["Choices"]:
-                assert choice["Next"] in state_names, (
-                    f"Choice in {name} → {choice['Next']} doesn't exist"
-                )
+                assert (
+                    choice["Next"] in state_names
+                ), f"Choice in {name} → {choice['Next']} doesn't exist"
             if "Default" in state:
                 assert state["Default"] in state_names
         if "Catch" in state:
@@ -100,18 +101,21 @@ def test_all_terminal_states_publish_to_sns() -> None:
     """Every terminal end-state in the success / failure / timeout paths
     publishes to SNS so the operator sees the outcome."""
     d = _load_definition()
-    terminal_states = [
-        name for name, s in d["States"].items() if s.get("End") is True
-    ]
+    terminal_states = [name for name, s in d["States"].items() if s.get("End") is True]
     # Should include ReplaySuccess, ReplayTriggerFailed, DiscardLogged,
     # OperatorTimedOut, OperatorDecisionInvalid
-    assert {"ReplaySuccess", "ReplayTriggerFailed", "DiscardLogged",
-            "OperatorTimedOut", "OperatorDecisionInvalid"} <= set(terminal_states)
+    assert {
+        "ReplaySuccess",
+        "ReplayTriggerFailed",
+        "DiscardLogged",
+        "OperatorTimedOut",
+        "OperatorDecisionInvalid",
+    } <= set(terminal_states)
     for name in terminal_states:
         state = d["States"][name]
-        assert state["Resource"] == "arn:aws:states:::sns:publish", (
-            f"Terminal state {name} should publish to SNS"
-        )
+        assert (
+            state["Resource"] == "arn:aws:states:::sns:publish"
+        ), f"Terminal state {name} should publish to SNS"
 
 
 def test_top_level_timeout_set() -> None:

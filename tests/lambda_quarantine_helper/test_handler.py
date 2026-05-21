@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import sys
-from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,7 +17,6 @@ import pytest
 from moto import mock_aws
 
 _LAMBDA_DIR = Path(__file__).resolve().parent.parent.parent / "lambda" / "quarantine_helper"
-sys.path.insert(0, str(_LAMBDA_DIR))
 
 _TEST_BUCKET = "lakehouse-test-bucket"
 _AIRFLOW_SECRET = "lakehouse-dev/airflow-api-creds"
@@ -26,6 +24,13 @@ _AIRFLOW_SECRET = "lakehouse-dev/airflow-api-creds"
 
 @pytest.fixture(autouse=True)
 def _env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Both file_validator and quarantine_helper have a top-level
+    # ``handler.py`` module. If the validator's test file imports first,
+    # its lambda dir ends up at sys.path[0] and our ``from handler
+    # import discard`` gets the wrong file. monkeypatch.syspath_prepend
+    # makes this test's dir win for the duration of the test, then
+    # restores the original sys.path after.
+    monkeypatch.syspath_prepend(str(_LAMBDA_DIR))
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
     monkeypatch.setenv("LAKEHOUSE_BUCKET", _TEST_BUCKET)
     monkeypatch.setenv("AIRFLOW_SECRET_NAME", _AIRFLOW_SECRET)
@@ -40,11 +45,13 @@ def aws() -> object:
         sm = boto3.client("secretsmanager", region_name="us-east-1")
         sm.create_secret(
             Name=_AIRFLOW_SECRET,
-            SecretString=json.dumps({
-                "base_url": "https://airflow.example.com",
-                "username": "lakehouse",
-                "password": "secret",
-            }),
+            SecretString=json.dumps(
+                {
+                    "base_url": "https://airflow.example.com",
+                    "username": "lakehouse",
+                    "password": "secret",
+                }
+            ),
         )
         yield {"s3": s3, "sm": sm}
 
@@ -63,9 +70,9 @@ def test_discard_deletes_file_and_writes_audit(aws: dict) -> None:
         aws["s3"].head_object(Bucket=_TEST_BUCKET, Key=key)
 
     # Audit log written today
-    objects = aws["s3"].list_objects_v2(
-        Bucket=_TEST_BUCKET, Prefix="processed/_quarantine_audit/"
-    )["Contents"]
+    objects = aws["s3"].list_objects_v2(Bucket=_TEST_BUCKET, Prefix="processed/_quarantine_audit/")[
+        "Contents"
+    ]
     assert len(objects) == 1
     body = aws["s3"].get_object(Bucket=_TEST_BUCKET, Key=objects[0]["Key"])["Body"].read()
     entry = json.loads(body.decode().strip())
@@ -85,7 +92,10 @@ def test_move_to_raw_copies_and_deletes_quarantine(aws: dict) -> None:
     assert result["to"] == "raw/orders/year=2025/month=05/day=01/orders.parquet"
 
     # Copy at raw
-    assert aws["s3"].get_object(Bucket=_TEST_BUCKET, Key=result["to"])["Body"].read() == b"corrected contents"
+    assert (
+        aws["s3"].get_object(Bucket=_TEST_BUCKET, Key=result["to"])["Body"].read()
+        == b"corrected contents"
+    )
     # Quarantine deleted
     with pytest.raises(aws["s3"].exceptions.ClientError):
         aws["s3"].head_object(Bucket=_TEST_BUCKET, Key=q_key)
@@ -125,17 +135,22 @@ def test_trigger_airflow_posts_to_airflow_rest_api(aws: dict) -> None:
     class FakeResp:
         def __init__(self, payload: dict) -> None:
             self._payload = json.dumps(payload).encode()
+
         def read(self) -> bytes:
             return self._payload
+
         def __enter__(self):
             return self
+
         def __exit__(self, *args):
             pass
 
     fake_response = FakeResp({"dag_run_id": "manual__abc123", "state": "queued"})
 
     with patch("handler.urllib.request.urlopen", return_value=fake_response) as urlopen_mock:
-        result = trigger_airflow(dag_id="daily_batch_pipeline", logical_date="2025-05-01T00:00:00+00:00")
+        result = trigger_airflow(
+            dag_id="daily_batch_pipeline", logical_date="2025-05-01T00:00:00+00:00"
+        )
 
     assert result["triggered"] is True
     assert result["response"]["dag_run_id"] == "manual__abc123"
@@ -176,9 +191,9 @@ def test_audit_log_appends_across_calls(aws: dict) -> None:
     discard(key1, operator="a", reason="r1")
     discard(key2, operator="a", reason="r2")
 
-    objects = aws["s3"].list_objects_v2(
-        Bucket=_TEST_BUCKET, Prefix="processed/_quarantine_audit/"
-    )["Contents"]
+    objects = aws["s3"].list_objects_v2(Bucket=_TEST_BUCKET, Prefix="processed/_quarantine_audit/")[
+        "Contents"
+    ]
     assert len(objects) == 1
     body = aws["s3"].get_object(Bucket=_TEST_BUCKET, Key=objects[0]["Key"])["Body"].read()
     lines = body.decode().strip().split("\n")

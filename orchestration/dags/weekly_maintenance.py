@@ -57,14 +57,11 @@ import logging
 import sys
 from datetime import timedelta
 from pathlib import Path
-from textwrap import dedent
 from typing import Any
 
 import pendulum
 from airflow.decorators import task
 from airflow.models import DAG, Variable
-from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
-from airflow.providers.databricks.operators.databricks import DatabricksRunNowOperator
 from airflow.utils.task_group import TaskGroup
 
 _DAG_FILE = Path(__file__).resolve()
@@ -167,9 +164,7 @@ def check_clustering_depth(table: str) -> dict[str, Any]:
 
     hook = SnowflakeHook(snowflake_conn_id=SNOWFLAKE_CONN_ID)
     # SYSTEM$CLUSTERING_INFORMATION returns a single JSON-string row.
-    rows = hook.get_records(
-        f"SELECT SYSTEM$CLUSTERING_INFORMATION('{table}') AS info"
-    )
+    rows = hook.get_records(f"SELECT SYSTEM$CLUSTERING_INFORMATION('{table}') AS info")
     info = json.loads(rows[0][0]) if rows else {}
     avg_depth = float(info.get("average_depth", 0.0))
     log.info("clustering check %s: avg_depth=%.2f", table, avg_depth)
@@ -280,7 +275,11 @@ def render_cost_report(
         "",
         "## Databricks DBUs",
         f"- **Total DBUs**: {db_total:.2f}"
-        + (" *(stubbed — workspace API not configured)*" if all(r.get("stubbed") for r in databricks_usage) else ""),
+        + (
+            " *(stubbed — workspace API not configured)*"
+            if all(r.get("stubbed") for r in databricks_usage)
+            else ""
+        ),
     ]
     for row in databricks_usage:
         lines.append(f"  - `{row['cluster_name']}` ({row['workload']}): {row['dbus_total']:.2f}")

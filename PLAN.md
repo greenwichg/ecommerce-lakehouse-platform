@@ -538,3 +538,129 @@ e2fc093 feat(snowflake): currency + wishlist + customer_ltv + MV + category deno
 3f50245 feat(generators): wishlist events with per-event grain + tests
 297f6d5 feat(generators): currency_rates with API + simulated fallback + _source provenance
 ```
+
+---
+
+## Session Recap (Slice 5)
+
+### Completed
+
+**Slice 5 — Infrastructure hardening** (~8 commits, ~50 new files across
+Terraform / Lambda / Snowflake / Airflow, +43 tests over Slice 4)
+
+| Area | Files | New tests |
+|------|-------|-----------|
+| `infrastructure/terraform/` (top-level + 7 modules) | 30+ | — (terraform fmt-validated) |
+| `lambda/file_validator/` (handler + Dockerfile) | 2 | 16 (moto-mocked S3/SQS/SNS) |
+| `lambda/quarantine_helper/` (handler + Dockerfile) | 2 | 9 (moto + mocked Airflow REST) |
+| `tests/lambda_quarantine_helper/test_state_machine_definition.py` | 1 | 9 (static ASL validation) |
+| `snowflake/ddl/01_resource_monitors.sql` (per-warehouse + account-level + BI wh) | 1 | — |
+| `orchestration/dags/weekly_maintenance.py` + tests | 1 | 8 (cadence, layer coverage, ordering) |
+| `docs/architecture.md` + `docs/runbook.md` Slice 5 sections | 2 | — |
+
+**Final test count: 313 passing** (was 270). All `terraform fmt -check`
+passes; live `terraform validate` blocked by sandbox network (no
+provider registry).
+
+### Deviations from the original plan
+
+1. **Helper Lambda gets its own IAM role**, not the SFN role. Initial
+   wiring re-used the SFN role for the quarantine_helper Lambda — but
+   that role trusts only `states.amazonaws.com`. Split out
+   `lambda_helper_role.tf` with a narrower policy: read quarantine/,
+   write raw/, audit-log only, plus GetSecretValue on the
+   airflow-api-creds secret. Caught before the first commit-and-push.
+
+2. **Bucket notification wired at top level**, not in `modules/s3`. The
+   circular dependency (queue's access policy needs bucket ARN; bucket
+   notification needs queue ARN) is impossible to express cleanly when
+   both resources live in the same module. Moving the
+   `aws_s3_bucket_notification` resource to `main.tf` and letting each
+   module's queue policy reference the bucket ARN string breaks the
+   cycle.
+
+3. **Container Image Lambda for the validator**, zip for the helper.
+   `pyarrow` forces the validator off the 50MB zip ceiling, but the
+   helper is boto3-only and stays on the simpler zip-deploy path —
+   except it doesn't, because for symmetry and consistency with the
+   validator's deploy story we ship both as images. The helper image is
+   tiny (~150MB) so cold-start cost is acceptable.
+
+4. **Account-level resource monitor sized for headroom, not total**.
+   Sum of per-warehouse caps = 500 credits/month; account-level set to
+   600. The 20% headroom means the account monitor only fires when a
+   rogue warehouse is consuming credits — its purpose is to catch
+   warehouses that were created outside the Terraform tree.
+
+5. **Databricks DBU usage stubbed in cost report**. Real implementation
+   needs a workspace API key wired via Secrets Manager + the
+   `databricks-sdk` package. Slice 5's stub emits rows in the correct
+   shape so the report aggregation logic is exercised; flipping the
+   stub to a real call is a one-task change in Slice 6+.
+
+6. **fix-and-replay polls every 5 minutes**, not on S3 PutObject event.
+   A new bucket notification + Lambda + SQS for the `_fixed/` prefix
+   would be more efficient but adds three resources for one workflow
+   branch. The polling loop in SFN costs $0.000025 per check; 5-minute
+   cadence × up to 7 days = ~$0.05 in worst case. Cheap enough.
+
+### Operator UX deferred to Slice 6
+
+The quarantine-replay workflow's "operator decides" step uses the AWS
+CLI `send-task-success` API (documented in runbook + step_functions
+README). Slice 6's Streamlit dashboard adds a "Quarantine queue" widget
+with one-click replay/discard/fix-and-replay buttons that POST to the
+SFN API. The CLI path stays as the manual fallback.
+
+### IAM walkthrough: what each role CAN'T do
+
+The `modules/iam/README.md` documents not just permissions granted but
+permissions explicitly omitted. Examples:
+
+- The validator Lambda role cannot write to bronze/silver/gold (those
+  prefixes are Databricks' alone).
+- The Snowflake storage-integration role cannot write to S3 — its
+  policy is GetObject + ListBucket only.
+- The Databricks instance profile cannot read Secrets Manager (it
+  reads the Databricks PAT from the workspace secret-scope instead).
+
+The four documented deviations from strict least-privilege all stem
+from AWS service limitations: `cloudwatch:PutMetricData` not being
+scopable by namespace at the action level, SFN log-delivery being
+account-wide, ListBucket needing the bucket ARN not a prefix ARN, and
+the Snowflake external-ID two-apply dance.
+
+### Tests + lint status at session end
+
+```
+pytest                                → 313 passed (was 270)
+terraform fmt -check -recursive       → All formatted
+terraform validate                    → blocked: sandbox cannot reach registry.terraform.io
+ruff check .                          → All checks passed!
+black --check .                       → All clean
+sqlfluff lint snowflake/              → All Finished! (0 violations)
+```
+
+### Open items for Slice 6
+
+- Streamlit dashboard (4 widgets per spec + Quarantine queue widget)
+- Databricks DBU usage live wiring (replace the stub in
+  `weekly_maintenance.py`)
+- GitHub Actions: `terraform fmt`/`validate` on PRs, pytest on PRs,
+  `terraform plan` on main with output as a PR comment
+- README architecture mermaid + cost estimates + tech stack version table
+- Demo failure scenario walkthrough (end-to-end: bad file →
+  quarantine → SNS → operator → replay → revenue dashboard updates)
+
+### Commit log (Slice 5)
+
+```
+a1b8581 style(infra): apply terraform fmt across all modules
+d0f2c52 feat(snowflake+orchestration): resource monitors + weekly maintenance DAG
+ac60da4 feat(iam+infra): dedicated helper Lambda role + airflow-api-creds secret
+5355143 feat(infra+lambda): Step Functions quarantine-replay workflow + helper Lambda
+c718d4a feat(lambda+infra): file validator Lambda (Container Image) + Terraform module
+f424088 feat(infra): IAM module — five least-privilege roles + walkthrough
+6424184 feat(infra): S3 + SNS + CloudWatch + Secrets modules
+eb7d26d chore(infra): Terraform skeleton — top-level files + per-env tfvars
+```

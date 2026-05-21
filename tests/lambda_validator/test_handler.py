@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import io
 import json
-import os
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -20,7 +19,6 @@ import pytest
 from moto import mock_aws
 
 _LAMBDA_DIR = Path(__file__).resolve().parent.parent.parent / "lambda" / "file_validator"
-sys.path.insert(0, str(_LAMBDA_DIR))
 
 _TEST_BUCKET = "lakehouse-test-bucket"
 _TEST_TOPIC = "arn:aws:sns:us-east-1:123456789012:lakehouse-pipeline-alerts"
@@ -29,6 +27,11 @@ _TEST_TOPIC = "arn:aws:sns:us-east-1:123456789012:lakehouse-pipeline-alerts"
 @pytest.fixture(autouse=True)
 def _env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub the AWS env vars before handler module's globals are read."""
+    # Both file_validator and quarantine_helper have a top-level
+    # ``handler.py`` module. Prepending the validator's lambda dir per-test
+    # ensures we get the right one regardless of collection order; sys.path
+    # is restored when the test ends.
+    monkeypatch.syspath_prepend(str(_LAMBDA_DIR))
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
     monkeypatch.setenv("LAKEHOUSE_BUCKET", _TEST_BUCKET)
     monkeypatch.setenv("ALERTS_TOPIC_ARN", _TEST_TOPIC)
@@ -122,7 +125,6 @@ def test_validate_missing_required_column_quarantines(aws: dict) -> None:
     """Build a Parquet without ``customer_id`` — orders requires it."""
     import pyarrow as pa
     import pyarrow.parquet as pq
-
     from handler import validate
 
     table = pa.table({"order_id": ["o1"], "quantity": [1]})
@@ -141,18 +143,23 @@ def test_validate_zero_rows_quarantines(aws: dict) -> None:
     """Empty Parquet (header but no data rows)."""
     import pyarrow as pa
     import pyarrow.parquet as pq
-
     from handler import validate
 
     schema = pa.schema(
         [
-            ("order_id", pa.string()), ("customer_id", pa.string()),
-            ("product_id", pa.string()), ("quantity", pa.int64()),
-            ("price", pa.float64()), ("status", pa.string()),
-            ("created_at", pa.timestamp("us")), ("updated_at", pa.timestamp("us")),
+            ("order_id", pa.string()),
+            ("customer_id", pa.string()),
+            ("product_id", pa.string()),
+            ("quantity", pa.int64()),
+            ("price", pa.float64()),
+            ("status", pa.string()),
+            ("created_at", pa.timestamp("us")),
+            ("updated_at", pa.timestamp("us")),
         ]
     )
-    empty = pa.table({n: [] for n, _ in zip(schema.names, schema.types, strict=False)}, schema=schema)
+    empty = pa.table(
+        {n: [] for n, _ in zip(schema.names, schema.types, strict=False)}, schema=schema
+    )
     buf = io.BytesIO()
     pq.write_table(empty, buf)
     key = "raw/orders/year=2025/month=05/day=01/orders.parquet"
@@ -180,18 +187,30 @@ def test_validate_jsonl_clickstream_happy_path(aws: dict) -> None:
     from handler import validate
 
     lines = [
-        json.dumps({
-            "event_id": "e1", "session_id": "s1", "customer_id": "c1",
-            "event_type": "page_view", "page_url": "/",
-            "event_ts": "2025-05-01T10:00:00+00:00",
-            "device": "desktop", "user_agent": "ua",
-        }),
-        json.dumps({
-            "event_id": "e2", "session_id": "s1", "customer_id": "c1",
-            "event_type": "page_view", "page_url": "/p",
-            "event_ts": "2025-05-01T10:05:00+00:00",
-            "device": "desktop", "user_agent": "ua",
-        }),
+        json.dumps(
+            {
+                "event_id": "e1",
+                "session_id": "s1",
+                "customer_id": "c1",
+                "event_type": "page_view",
+                "page_url": "/",
+                "event_ts": "2025-05-01T10:00:00+00:00",
+                "device": "desktop",
+                "user_agent": "ua",
+            }
+        ),
+        json.dumps(
+            {
+                "event_id": "e2",
+                "session_id": "s1",
+                "customer_id": "c1",
+                "event_type": "page_view",
+                "page_url": "/p",
+                "event_ts": "2025-05-01T10:05:00+00:00",
+                "device": "desktop",
+                "user_agent": "ua",
+            }
+        ),
     ]
     body = ("\n".join(lines) + "\n").encode()
     key = "raw/clickstream/year=2025/month=05/day=01/hour=10/events.json"
@@ -206,13 +225,17 @@ def test_validate_unexpected_column_emits_warning(aws: dict) -> None:
     Bronze handles new columns via addNewColumns; we log but don't reject."""
     import pyarrow as pa
     import pyarrow.parquet as pq
-
     from handler import validate
 
     cols = {
-        "order_id": ["o1"], "customer_id": ["c1"], "product_id": ["p1"],
-        "quantity": [1], "price": [9.99], "status": ["placed"],
-        "created_at": [None], "updated_at": [None],
+        "order_id": ["o1"],
+        "customer_id": ["c1"],
+        "product_id": ["p1"],
+        "quantity": [1],
+        "price": [9.99],
+        "status": ["placed"],
+        "created_at": [None],
+        "updated_at": [None],
         "experiment_variant_id": ["A"],  # NEW unexpected column
     }
     buf = io.BytesIO()
@@ -253,8 +276,12 @@ def test_manifest_appended_per_call(aws: dict) -> None:
 
     key1 = "raw/orders/year=2025/month=05/day=01/orders.parquet"
     key2 = "raw/orders/year=2025/month=05/day=02/orders.parquet"
-    write_manifest(_TEST_BUCKET, key1, Outcome(severity="validated", reason="ok", source="orders", rows=10))
-    write_manifest(_TEST_BUCKET, key2, Outcome(severity="quarantine", reason="zero_rows", source="orders"))
+    write_manifest(
+        _TEST_BUCKET, key1, Outcome(severity="validated", reason="ok", source="orders", rows=10)
+    )
+    write_manifest(
+        _TEST_BUCKET, key2, Outcome(severity="quarantine", reason="zero_rows", source="orders")
+    )
 
     # Find the manifest object (path is keyed by today's date)
     response = aws["s3"].list_objects_v2(Bucket=_TEST_BUCKET, Prefix="processed/_manifests/")
@@ -276,22 +303,28 @@ def test_handler_processes_sqs_batch(aws: dict) -> None:
     event = {
         "Records": [
             {
-                "body": json.dumps({
-                    "Records": [
-                        {
-                            "s3": {
-                                "bucket": {"name": _TEST_BUCKET},
-                                "object": {"key": "raw/orders/year=2025/month=05/day=01/orders.parquet"},
-                            }
-                        },
-                        {
-                            "s3": {
-                                "bucket": {"name": _TEST_BUCKET},
-                                "object": {"key": "raw/orders/year=2025/month=05/day=02/orders.parquet"},
-                            }
-                        },
-                    ]
-                })
+                "body": json.dumps(
+                    {
+                        "Records": [
+                            {
+                                "s3": {
+                                    "bucket": {"name": _TEST_BUCKET},
+                                    "object": {
+                                        "key": "raw/orders/year=2025/month=05/day=01/orders.parquet"
+                                    },
+                                }
+                            },
+                            {
+                                "s3": {
+                                    "bucket": {"name": _TEST_BUCKET},
+                                    "object": {
+                                        "key": "raw/orders/year=2025/month=05/day=02/orders.parquet"
+                                    },
+                                }
+                            },
+                        ]
+                    }
+                )
             }
         ]
     }

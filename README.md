@@ -21,7 +21,7 @@ next. See [`PLAN.md`](PLAN.md) for the slice plan.
 | 2 | **Customers + Products** (SCD2 dimensions, PIT-correct surrogate joins) | ✅ done |
 | 3 | **Clickstream** + hourly DAG + sessionization + Snowpipe/Streams/Tasks + Dataset triggering | ✅ done |
 | 4 | **Currency rates** + customer_ltv mart + wishlist factless fact + MV | ✅ done |
-| 5 | Infra hardening + DR + weekly maintenance DAG | ⏳ pending |
+| 5 | **Infra hardening**: Terraform (7 modules), validator Lambda (Container Image), quarantine-replay Step Functions, IAM least-privilege, Snowflake resource monitors, weekly maintenance DAG + cost report | ✅ done |
 | 6 | Streamlit + CI/CD deploy + full docs | ⏳ pending |
 
 ## Architecture
@@ -162,14 +162,44 @@ Manager in prod via Airflow's secrets backend.
 
 ## Cost estimates
 
-Per-component cost notes will appear in `docs/architecture.md` as each
+Per-component cost notes appear in `docs/architecture.md` as each
 slice lands. Headline assumptions:
 
 - S3 raw stays "Standard" for 90 days, then transitions to Glacier
   Flexible Retrieval (lifecycle policy in `infrastructure/terraform/`).
 - Databricks jobs use job clusters (not all-purpose) for spot-priced
   ephemeral compute.
-- Snowflake serving uses an XS warehouse with 60s auto-suspend.
+- Snowflake serving uses an XS warehouse with 60s auto-suspend; per-
+  warehouse + account-level resource monitors cap spend with NOTIFY
+  at 75%/90% and SUSPEND at 100% (see
+  `snowflake/ddl/01_resource_monitors.sql`).
+- Quarantine review uses Step Functions `waitForTaskToken` for the
+  7-day operator-decision window — zero compute cost while waiting,
+  vs ~$X/hour for an Airflow worker slot held open over the same span.
+
+## Infrastructure
+
+Slice 5 added a Terraform tree under `infrastructure/terraform/`:
+
+```
+infrastructure/terraform/
+├── main.tf              # top-level wiring; thin
+├── variables.tf         # env, bucket name, retention, etc.
+├── environments/        # dev.tfvars / prod.tfvars
+└── modules/
+    ├── s3/              # bucket + KMS + lifecycle
+    ├── sns/             # alerts topic + email subscription
+    ├── cloudwatch/      # log groups + metric alarms + dashboard
+    ├── secrets/         # 4 placeholder secrets (databricks, snowflake, exchangerate, airflow)
+    ├── iam/             # 5 least-privilege roles + walkthrough README
+    ├── lambda_validator/  # SQS + DLQ + Container Image Lambda
+    └── step_functions/  # ASL JSON + quarantine_helper Lambda
+```
+
+The state machine implements a three-branch human-in-the-loop
+quarantine workflow (replay / discard / fix-and-replay) — see
+`infrastructure/terraform/modules/step_functions/README.md` for the
+scenario walkthrough and the why-not-Airflow cost comparison.
 
 ## Documentation
 

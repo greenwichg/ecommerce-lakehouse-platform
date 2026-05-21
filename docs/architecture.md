@@ -346,3 +346,135 @@ lets the gate fire on the second case before the dashboard reports it.
 worth preserving. The trade-off (DISTINCT needed for "is this
 relationship currently active?" queries) is the canonical factless-fact
 ergonomic and matches Kimball's textbook treatment of events.
+
+## Slice 5 additions (infrastructure hardening)
+
+### Terraform module structure: one consumer = one module
+
+Each AWS consumer (`s3`, `sns`, `cloudwatch`, `secrets`, `iam`,
+`lambda_validator`, `step_functions`) gets its own module under
+`infrastructure/terraform/modules/`. The top-level `main.tf` wires them
+together through inputs/outputs without duplicating any policy or
+resource definitions. The boundary makes refactors cheap: changing the
+SQS visibility timeout means editing one file, and rebuilding the
+validator stack alone means re-applying just that module.
+
+The notable cross-module hand-offs:
+
+- The S3 → SQS → Lambda chain crosses three modules. The bucket
+  notification resource lives at the top level (`main.tf`) rather than
+  in `modules/s3` to break the circular dependency: the SQS queue's
+  access policy needs the bucket ARN, and the bucket notification needs
+  the queue ARN.
+- The IAM module is the single source of truth for role ARNs. Other
+  modules consume them via `module.iam.<role>_arn` outputs instead of
+  building inline policies, which keeps least-privilege auditing in one
+  place (`modules/iam/README.md`).
+
+### Container Image Lambda for the validator
+
+`pyarrow` plus its native dependencies exceeds Lambda's 50MB zip-deploy
+ceiling. The validator ships as a Container Image instead, built from
+`public.ecr.aws/lambda/python:3.11` with `pyarrow` and `boto3` baked
+in. Image size is ~250MB but Lambda's container-image limit is 10GB so
+that's a non-issue. Cold start is ~3s vs ~500ms for a zip; acceptable
+for an SQS-triggered validator that doesn't sit on the user request
+path.
+
+### S3 → SQS → Lambda with DLQ + ReportBatchItemFailures
+
+Direct S3 → Lambda would lose events on a sustained Lambda outage. The
+SQS queue absorbs the burst: 4-day message retention, 360s visibility
+(6× Lambda timeout), DLQ with `maxReceiveCount: 3` separates poison
+messages, and `function_response_types = ["ReportBatchItemFailures"]`
+lets one bad record in a batch fail without re-running the whole batch.
+This is the textbook AWS event-driven pattern; the redrive policy is
+the part that lets ops investigate failed files without losing them.
+
+### Human-in-the-loop quarantine: Step Functions, not Airflow
+
+The quarantine-review-replay state machine waits for an operator
+decision that can take days. The defining choice is `waitForTaskToken`
+in `WaitForOperatorDecision`: SFN holds the execution open at zero
+compute cost for up to 7 days (configurable to 1 year). Airflow sensors
+would hold a worker slot for the same window — fine at single-digit
+quarantines per week, ruinous at hundreds.
+
+Three decision branches, all converging on a terminal SNS publish so
+operators see every outcome:
+
+| Decision | Path |
+|---|---|
+| `replay` | move `quarantine/...` → `raw/...` → trigger Airflow DAG |
+| `discard` | append to `processed/_quarantine_audit/<date>.jsonl` + delete S3 object |
+| `fix-and-replay` | notify operator of expected `_fixed/<filename>` upload path → poll for file → move → trigger DAG |
+
+The `quarantine_helper` Lambda holds the discrete S3/Airflow
+operations as pure functions (`discard`, `move_to_raw`, `poll_for_fix`,
+`trigger_airflow`) so they're unit-testable with moto. ASL JSON is
+statically validated by `tests/lambda_quarantine_helper/test_state_machine_definition.py`
+(no orphan states, all `Next` targets resolve, the polling loop's
+back-edge is intact).
+
+### IAM least-privilege with documented deviations
+
+Five roles, each scoped to a single consumer:
+`databricks_instance_profile`, `airflow_execution_role`, `lambda_role`
+(validator), `lambda_helper_role` (quarantine), `step_functions_role`.
+Each role's policy is bucket-prefix-scoped via the `s3:prefix`
+condition on `ListBucket` and ARN-scoped on object actions.
+
+`modules/iam/README.md` documents the four IAM service limitations that
+force deviation from strict least-privilege:
+
+1. `cloudwatch:PutMetricData` can't be scoped by namespace via the
+   action itself; we add a `cloudwatch:namespace` condition instead.
+2. SFN log delivery (`logs:CreateLogDelivery` etc.) is account-wide;
+   not scoped to a log group at the IAM level.
+3. The Snowflake `STORAGE INTEGRATION` IAM role requires a two-apply
+   bootstrap because Snowflake's external ID is only available after
+   the integration object is created.
+4. `ListBucket` can be scoped by prefix but only on the bucket ARN
+   itself — the prefix appears in a condition.
+
+### Cost guardrails: Snowflake resource monitors + weekly cost report
+
+Cost runaway in Snowflake can happen silently — a warehouse stays
+suspended most of the time, then a single bad query lights it up. The
+Slice 5 guardrails are layered:
+
+1. **Per-warehouse resource monitors** with credit caps, alerts at
+   75% / 90%, soft suspend at 100%, hard suspend at 110%. Defined in
+   `snowflake/ddl/01_resource_monitors.sql`.
+2. **Separate BI warehouse** so a runaway dashboard query can't
+   starve the ETL pipeline. The ETL warehouse keeps its 400-credit
+   monthly cap; the BI warehouse gets 100.
+3. **Account-level safety net** monitor at 600 credits/month
+   (~20% headroom over the per-warehouse sum). Catches credits from
+   warehouses created outside the Terraform tree.
+4. **Weekly cost report DAG** (`weekly_maintenance.py`) aggregates
+   Snowflake `WAREHOUSE_METERING_HISTORY` and Databricks billable-usage
+   (stubbed pending workspace API wiring) and SNS-publishes a Markdown
+   summary. Snowflake + Databricks on the same report makes the
+   split-compute story visible: drift in DBUs without drift in
+   credits, or vice versa, is the signal that one side is doing
+   work that should be on the other.
+
+### Weekly maintenance: OPTIMIZE + VACUUM + clustering check
+
+Delta accumulates small part-files from append-mode streaming writes;
+left alone, the metadata snapshot grows until reads slow. Snowflake
+auto-clusters but doesn't surface depth metrics on a schedule. The
+weekly maintenance DAG (Sundays 04:00 UTC, between the daily batch
+and the next hourly clickstream window) handles both:
+
+- `OPTIMIZE` + `VACUUM` per Delta table, mapped dynamically so a
+  stuck VACUUM on `fact_orders` doesn't block the others.
+- `SYSTEM$CLUSTERING_INFORMATION` per Snowflake fact table; alert if
+  `avg_depth > 4.0` (Snowflake docs heuristic for "consider
+  reclustering").
+
+The DAG's failure callback uses the same SNS topic but with an
+advisory subject prefix — maintenance failures don't take the platform
+down, so they shouldn't page on-call at the same severity as a daily
+DAG failure.

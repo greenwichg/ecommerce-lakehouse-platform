@@ -94,7 +94,7 @@ def _raw_key(quarantine_key: str) -> str:
     """quarantine/<source>/... → raw/<source>/..."""
     if not quarantine_key.startswith("quarantine/"):
         raise ValueError(f"expected key under quarantine/, got {quarantine_key!r}")
-    return "raw/" + quarantine_key[len("quarantine/"):]
+    return "raw/" + quarantine_key[len("quarantine/") :]
 
 
 def move_to_raw(quarantine_key: str, operator: str) -> dict:
@@ -106,17 +106,21 @@ def move_to_raw(quarantine_key: str, operator: str) -> dict:
     """
     raw_key = _raw_key(quarantine_key)
     s3.copy_object(
-        Bucket=BUCKET, Key=raw_key,
+        Bucket=BUCKET,
+        Key=raw_key,
         CopySource={"Bucket": BUCKET, "Key": quarantine_key},
     )
     s3.delete_object(Bucket=BUCKET, Key=quarantine_key)
-    _audit_log_entry(BUCKET, {
-        "action": "move_to_raw",
-        "moved_at": datetime.now(UTC).isoformat(),
-        "from": quarantine_key,
-        "to": raw_key,
-        "operator": operator,
-    })
+    _audit_log_entry(
+        BUCKET,
+        {
+            "action": "move_to_raw",
+            "moved_at": datetime.now(UTC).isoformat(),
+            "from": quarantine_key,
+            "to": raw_key,
+            "operator": operator,
+        },
+    )
     return {"moved": True, "from": quarantine_key, "to": raw_key}
 
 
@@ -173,18 +177,23 @@ def trigger_airflow(dag_id: str, logical_date: str) -> dict:
     creds = json.loads(secret_string)
 
     url = f"{creds['base_url'].rstrip('/')}/api/v1/dags/{dag_id}/dagRuns"
-    body = json.dumps({
-        "logical_date": logical_date,
-        "conf": {"triggered_by": "quarantine-replay-sfn"},
-    }).encode()
+    body = json.dumps(
+        {
+            "logical_date": logical_date,
+            "conf": {"triggered_by": "quarantine-replay-sfn"},
+        }
+    ).encode()
 
     # Basic auth header; Airflow 2.x API supports this when
     # api.auth_backends includes airflow.api.auth.backend.basic_auth.
     import base64
+
     auth = base64.b64encode(f"{creds['username']}:{creds['password']}".encode()).decode()
 
     req = urllib.request.Request(
-        url, data=body, method="POST",
+        url,
+        data=body,
+        method="POST",
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Basic {auth}",

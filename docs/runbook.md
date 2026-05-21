@@ -347,3 +347,149 @@ The `_source` column lets analysts filter to API-only rates if they need strict 
 SELECT * FROM analytics.currency_rates
 WHERE rate_date = CURRENT_DATE - 1 AND _source = 'api';
 ```
+
+## Slice 5 specifics
+
+### Operator-driven quarantine review (Step Functions)
+
+When the validator Lambda quarantines a file, it publishes an SNS
+alert with:
+
+- the quarantine S3 key,
+- the failure reason (`missing_columns: customer_id`, `bad_parquet_schema`, etc.),
+- the SFN execution ARN + task token.
+
+The operator then issues one of:
+
+```bash
+# 1. False positive — replay it
+aws stepfunctions send-task-success \
+    --task-token "$TOKEN" \
+    --task-output '{"decision":"replay","operator":"alice@example.com","logical_date":"2025-05-21"}'
+
+# 2. Upstream broken, abandon
+aws stepfunctions send-task-success \
+    --task-token "$TOKEN" \
+    --task-output '{"decision":"discard","operator":"alice@example.com","reason":"vendor confirmed bad export, regenerating tomorrow"}'
+
+# 3. Fix on the way — ops will upload `_fixed/<filename>`
+aws stepfunctions send-task-success \
+    --task-token "$TOKEN" \
+    --task-output '{"decision":"fix-and-replay","operator":"alice@example.com","logical_date":"2025-05-21"}'
+```
+
+For fix-and-replay, the operator then uploads the corrected file to:
+
+```
+s3://<lakehouse-bucket>/quarantine/<source>/<partitions>/_fixed/<original-filename>
+```
+
+The state machine polls for that key every 5 minutes (configurable in
+`definition.asl.json`'s `WaitForFixedFile.Seconds`) and replays
+automatically when it appears.
+
+The 7-day timeout on `WaitForOperatorDecision` is the hard SLA — past
+that the execution moves to `OperatorTimedOut` and pages ops. Pick
+faster than 7 days in practice; the limit is there to protect against
+orphaned executions, not as a normal review window.
+
+### Locating an active quarantine execution
+
+```bash
+# Currently waiting for an operator decision
+aws stepfunctions list-executions \
+    --state-machine-arn <ARN> \
+    --status-filter RUNNING
+
+# Get the task token + input for a specific execution
+aws stepfunctions describe-execution --execution-arn <EXEC_ARN>
+```
+
+(Slice 6 will surface this as a Streamlit "Quarantine queue" widget
+with one-click decision buttons.)
+
+### Snowflake cost runaway
+
+| Symptom | First action | Escalate when |
+|---|---|---|
+| Resource-monitor NOTIFY at 75% | Identify the heavy query: `SELECT * FROM snowflake.account_usage.query_history WHERE warehouse_name = '<wh>' AND start_time > DATEADD(day, -1, current_timestamp()) ORDER BY total_elapsed_time DESC LIMIT 20` | Same query repeats — engineer to add a partition filter / cluster key / MV |
+| Resource-monitor NOTIFY at 90% | Investigate ASAP; consider manual `ALTER WAREHOUSE <wh> SUSPEND` to halt non-essential workloads | Hourly DAGs landing in the same warehouse get suspended at 100% |
+| Resource-monitor SUSPEND at 100% | Warehouse is paused; in-flight queries finish, new ones queue. Decide: raise the cap (if expected) or block source of overrun | The same warehouse hits 100% repeatedly day-over-day — re-size the cap or move workload |
+| Account safety-net NOTIFY at 75% | Someone created a warehouse outside Terraform. Find it: `SELECT name FROM snowflake.account_usage.warehouses WHERE deleted IS NULL` and attach a resource monitor | Cannot identify the rogue warehouse within 4h |
+
+### Weekly maintenance failure
+
+The `weekly_maintenance` DAG is advisory, not critical. If it fails:
+
+- **OPTIMIZE/VACUUM task on one Delta table failed**: rerun just that
+  table from the Airflow UI; the others succeeded. Investigate Delta
+  log conflicts (e.g., a long-running query holding a snapshot).
+- **Clustering check task failed**: usually a transient Snowflake
+  warehouse pause. Retry. If persistent, check `SYSTEM$CLUSTERING_INFORMATION`
+  manually.
+- **Cost report task failed**: the report is informational; not a page
+  but should be investigated so the weekly trend isn't lost.
+
+### Cost report interpretation
+
+The Sunday cost-report SNS message is a Markdown table with:
+
+- Snowflake credits by warehouse (last 7 days)
+- Databricks DBUs by cluster (stubbed for now — workspace API wiring is
+  Slice 6+)
+- Clustering depth flagging tables that crossed the 4.0 alert threshold
+
+Things to look for week-over-week:
+
+1. **Credit drift without workload change**: a query plan regression
+   or a Snowflake auto-clustering credit surge.
+2. **DBU drift without credit drift (or vice versa)**: split-compute
+   imbalance — work that should be on one side is leaking to the other.
+3. **Clustering depth alerts**: schedule manual `ALTER TABLE ...
+   RECLUSTER` during the next maintenance window if the table's
+   ingestion pattern broke the clustering key's effectiveness.
+
+### Replacing secret placeholders
+
+Three Secrets Manager entries are created with placeholder JSON. After
+the first `terraform apply`, populate the real values:
+
+```bash
+# Databricks workspace PAT
+aws secretsmanager put-secret-value \
+    --secret-id lakehouse-prod/databricks-pat \
+    --secret-string '{"host":"https://<workspace>.cloud.databricks.com","token":"<real-pat>"}'
+
+# Snowflake credentials (private-key auth)
+aws secretsmanager put-secret-value \
+    --secret-id lakehouse-prod/snowflake-creds \
+    --secret-string file://snowflake-creds.json
+
+# Airflow REST API (for the quarantine-replay flow)
+aws secretsmanager put-secret-value \
+    --secret-id lakehouse-prod/airflow-api-creds \
+    --secret-string '{"base_url":"https://<env>.airflow.amazonaws.com","username":"lakehouse_replay","password":"<real>"}'
+```
+
+The 7-day recovery window on each secret means an accidental delete is
+recoverable for a week — see `aws secretsmanager restore-secret`.
+
+### Snowflake STORAGE INTEGRATION two-apply dance
+
+The `snowflake_storage_integration_role` IAM role's trust policy
+references a placeholder external ID. Real bootstrap:
+
+1. First Terraform apply creates the role with placeholder external ID
+   (`PLACEHOLDER_EXTERNAL_ID`).
+2. Run `CREATE STORAGE INTEGRATION ...` in Snowflake using the role
+   ARN.
+3. `DESC INTEGRATION lakehouse_s3_integration;` — record the
+   `STORAGE_AWS_EXTERNAL_ID` value.
+4. Update the IAM trust policy with the real external ID (override the
+   placeholder in `modules/iam/policy_documents.tf` or
+   `terraform.tfvars`).
+5. Second Terraform apply rotates the trust policy.
+
+Documented in `modules/iam/README.md`. There's no way around this in
+AWS — the external ID is generated by Snowflake at integration
+creation time.
