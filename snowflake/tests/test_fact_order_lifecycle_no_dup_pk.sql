@@ -1,7 +1,7 @@
 -- Test: fact_order_lifecycle has no duplicate primary keys (one row per order).
 
 USE ROLE lakehouse_engineer;
-USE DATABASE &{SNOWFLAKE_DATABASE};
+USE DATABASE {{ params.SNOWFLAKE_DATABASE }};
 USE SCHEMA analytics;
 
 SELECT

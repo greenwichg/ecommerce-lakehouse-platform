@@ -2,7 +2,7 @@
 -- A passing test returns ZERO rows; any returned row is a violation.
 
 USE ROLE lakehouse_engineer;
-USE DATABASE &{SNOWFLAKE_DATABASE};
+USE DATABASE {{ params.SNOWFLAKE_DATABASE }};
 USE SCHEMA analytics;
 
 SELECT

@@ -4,7 +4,7 @@
 -- Slice 2, this file gains FK checks against those dims.)
 
 USE ROLE lakehouse_engineer;
-USE DATABASE &{SNOWFLAKE_DATABASE};
+USE DATABASE {{ params.SNOWFLAKE_DATABASE }};
 USE SCHEMA analytics;
 
 SELECT

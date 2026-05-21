@@ -3,7 +3,7 @@
 -- snowflake/dml/orders_load.sql via COPY INTO.
 
 USE ROLE lakehouse_engineer;
-USE DATABASE &{SNOWFLAKE_DATABASE};
+USE DATABASE {{ params.SNOWFLAKE_DATABASE }};
 USE SCHEMA raw;
 
 CREATE TABLE IF NOT EXISTS fact_orders_raw (
@@ -45,4 +45,5 @@ CREATE TABLE IF NOT EXISTS fact_order_lifecycle_raw (
     _loaded_at TIMESTAMP_TZ DEFAULT CURRENT_TIMESTAMP(),
     _source_batch_id VARCHAR(64)
 )
-COMMENT = 'Raw landing for the accumulating-snapshot fact. Grain: one row per order_id, milestones accumulated.';
+COMMENT
+= 'Raw landing for the accumulating-snapshot fact. Grain: one row per order_id, milestones accumulated.';

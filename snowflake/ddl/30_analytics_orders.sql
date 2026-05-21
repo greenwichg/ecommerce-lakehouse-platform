@@ -11,7 +11,7 @@
 -- docs/architecture.md under "Clustering decisions".
 
 USE ROLE lakehouse_engineer;
-USE DATABASE &{SNOWFLAKE_DATABASE};
+USE DATABASE {{ params.SNOWFLAKE_DATABASE }};
 USE SCHEMA analytics;
 
 CREATE TABLE IF NOT EXISTS fact_orders (
@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS fact_orders (
     CONSTRAINT pk_fact_orders PRIMARY KEY (order_id)
 )
 CLUSTER BY (DATE_TRUNC('DAY', created_at), status)
-COMMENT = 'Transactional grain. One row per order_id, current state. Loaded via MERGE from raw.fact_orders_raw.';
+COMMENT
+= 'Transactional grain. One row per order_id, current state. Loaded via MERGE from raw.fact_orders_raw.';
 
 CREATE TABLE IF NOT EXISTS fact_order_lifecycle (
     order_sk VARCHAR(64) NOT NULL,
@@ -57,4 +58,4 @@ CREATE TABLE IF NOT EXISTS fact_order_lifecycle (
     CONSTRAINT pk_fact_order_lifecycle PRIMARY KEY (order_id)
 )
 CLUSTER BY (DATE_TRUNC('DAY', placed_at))
-COMMENT = 'Accumulating-snapshot fact. Grain: one row per order_id, milestones (placed/paid/shipped/delivered/cancelled) accumulated as the order progresses.';
+COMMENT = 'Accumulating-snapshot fact. One row per order_id, milestones accumulated as orders progress.';

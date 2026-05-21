@@ -1,9 +1,19 @@
 [sqlfluff]
 dialect = snowflake
 templater = jinja
-max_line_length = 100
+# SQL is more verbose than Python — fully-qualified identifiers (db.schema.table)
+# plus jinja-templated placeholders push past 100 quickly. 120 matches what the
+# Snowflake docs themselves render at.
+max_line_length = 120
 # L034 (col order) and L036 (single col per line) conflict with our preferred style
 exclude_rules = structure.column_order, layout.select_targets
+
+# Jinja context used only for linting. Airflow renders these per-run via
+# SQLExecuteQueryOperator(params=...); schemachange / snowsql can substitute
+# at deploy time. The values below are placeholders — they don't have to
+# match production, they just have to be syntactically valid in their slot.
+[sqlfluff:templater:jinja:context]
+params = {"SNOWFLAKE_DATABASE": "dev_lakehouse", "SNOWFLAKE_WAREHOUSE": "dev_wh", "BATCH_ID": "20250520T143022Z-deadbeef", "LAKEHOUSE_BUCKET": "ecommerce-lakehouse-dev", "S3_INTEGRATION_ROLE_ARN": "arn:aws:iam::123456789012:role/lakehouse-s3"}
 
 [sqlfluff:indentation]
 tab_space_size = 4

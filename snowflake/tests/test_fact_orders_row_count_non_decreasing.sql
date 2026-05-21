@@ -7,7 +7,7 @@
 -- the test returns zero rows and passes vacuously.
 
 USE ROLE lakehouse_engineer;
-USE DATABASE &{SNOWFLAKE_DATABASE};
+USE DATABASE {{ params.SNOWFLAKE_DATABASE }};
 USE SCHEMA analytics;
 
 WITH today_count AS (
@@ -16,8 +16,9 @@ WITH today_count AS (
 
 yesterday_count AS (
     SELECT COUNT(*) AS n
-    FROM fact_orders
-    AT (OFFSET => -86400)            -- Snowflake Time Travel: 24h ago
+    FROM
+        fact_orders
+        AT (OFFSET => -86400)            -- Snowflake Time Travel: 24h ago
 )
 
 SELECT

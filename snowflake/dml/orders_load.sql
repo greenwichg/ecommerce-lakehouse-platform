@@ -2,16 +2,16 @@
 -- This is the SQL the Airflow daily DAG runs via SQLExecuteQueryOperator.
 --
 -- Parameters (set by Airflow via session vars or templated SQL):
---   &{SNOWFLAKE_DATABASE}: target database
---   &{BATCH_ID}: lineage tag for this load
+--   {{ params.SNOWFLAKE_DATABASE }}: target database
+--   {{ params.BATCH_ID }}: lineage tag for this load
 --
 -- The load is idempotent: COPY INTO uses FORCE=FALSE so re-running with
 -- the same S3 files doesn't double-load, and the downstream MERGE
 -- preserves rows when the source updated_at <= target updated_at.
 
 USE ROLE lakehouse_engineer;
-USE DATABASE &{SNOWFLAKE_DATABASE};
-USE WAREHOUSE &{SNOWFLAKE_WAREHOUSE};
+USE DATABASE {{ params.SNOWFLAKE_DATABASE }};
+USE WAREHOUSE {{ params.SNOWFLAKE_WAREHOUSE }};
 
 -- 1) Stage fact_orders Parquet -> raw.fact_orders_raw
 COPY INTO raw.fact_orders_raw (
@@ -33,7 +33,7 @@ FROM (
         $1:status::VARCHAR,
         $1:created_at::TIMESTAMP_TZ,
         $1:updated_at::TIMESTAMP_TZ,
-        '&{BATCH_ID}'
+        '{{ params.BATCH_ID }}'
     FROM @raw.gold_fact_orders_stage
 )
 FILE_FORMAT = (FORMAT_NAME = raw.gold_parquet_format)
@@ -52,23 +52,24 @@ USING (
         quantity, price, total_amount, status, created_at, updated_at,
         _loaded_at, _source_batch_id
     FROM raw.fact_orders_raw
-    WHERE _source_batch_id = '&{BATCH_ID}'
+    WHERE _source_batch_id = '{{ params.BATCH_ID }}'
 ) AS s
-ON t.order_id = s.order_id
-WHEN MATCHED AND s.updated_at > t.updated_at THEN UPDATE SET
-    t.order_sk = s.order_sk,
-    t.customer_id = s.customer_id,
-    t.customer_sk = s.customer_sk,
-    t.product_id = s.product_id,
-    t.product_sk = s.product_sk,
-    t.quantity = s.quantity,
-    t.price = s.price,
-    t.total_amount = s.total_amount,
-    t.status = s.status,
-    t.created_at = s.created_at,
-    t.updated_at = s.updated_at,
-    t._loaded_at = s._loaded_at,
-    t._source_batch_id = s._source_batch_id
+    ON t.order_id = s.order_id
+WHEN MATCHED AND s.updated_at > t.updated_at THEN
+    UPDATE SET
+        t.order_sk = s.order_sk,
+        t.customer_id = s.customer_id,
+        t.customer_sk = s.customer_sk,
+        t.product_id = s.product_id,
+        t.product_sk = s.product_sk,
+        t.quantity = s.quantity,
+        t.price = s.price,
+        t.total_amount = s.total_amount,
+        t.status = s.status,
+        t.created_at = s.created_at,
+        t.updated_at = s.updated_at,
+        t._loaded_at = s._loaded_at,
+        t._source_batch_id = s._source_batch_id
 WHEN NOT MATCHED THEN INSERT (
     order_sk, order_id, customer_id, customer_sk, product_id, product_sk,
     quantity, price, total_amount, status, created_at, updated_at,
@@ -105,7 +106,7 @@ FROM (
         $1:days_shipped_to_delivered::NUMBER(12, 4),
         $1:days_placed_to_delivered::NUMBER(12, 4),
         $1:updated_at::TIMESTAMP_TZ,
-        '&{BATCH_ID}'
+        '{{ params.BATCH_ID }}'
     FROM @raw.gold_fact_order_lifecycle_stage
 )
 FILE_FORMAT = (FORMAT_NAME = raw.gold_parquet_format)
@@ -118,28 +119,29 @@ MERGE INTO analytics.fact_order_lifecycle AS t
 USING (
     SELECT *
     FROM raw.fact_order_lifecycle_raw
-    WHERE _source_batch_id = '&{BATCH_ID}'
+    WHERE _source_batch_id = '{{ params.BATCH_ID }}'
 ) AS s
-ON t.order_id = s.order_id
-WHEN MATCHED AND s.updated_at > t.updated_at THEN UPDATE SET
-    t.order_sk = s.order_sk,
-    t.customer_id = s.customer_id,
-    t.product_id = s.product_id,
-    t.quantity = s.quantity,
-    t.price = s.price,
-    t.status = s.status,
-    t.placed_at = s.placed_at,
-    t.paid_at = s.paid_at,
-    t.shipped_at = s.shipped_at,
-    t.delivered_at = s.delivered_at,
-    t.cancelled_at = s.cancelled_at,
-    t.days_placed_to_paid = s.days_placed_to_paid,
-    t.days_paid_to_shipped = s.days_paid_to_shipped,
-    t.days_shipped_to_delivered = s.days_shipped_to_delivered,
-    t.days_placed_to_delivered = s.days_placed_to_delivered,
-    t.updated_at = s.updated_at,
-    t._loaded_at = s._loaded_at,
-    t._source_batch_id = s._source_batch_id
+    ON t.order_id = s.order_id
+WHEN MATCHED AND s.updated_at > t.updated_at THEN
+    UPDATE SET
+        t.order_sk = s.order_sk,
+        t.customer_id = s.customer_id,
+        t.product_id = s.product_id,
+        t.quantity = s.quantity,
+        t.price = s.price,
+        t.status = s.status,
+        t.placed_at = s.placed_at,
+        t.paid_at = s.paid_at,
+        t.shipped_at = s.shipped_at,
+        t.delivered_at = s.delivered_at,
+        t.cancelled_at = s.cancelled_at,
+        t.days_placed_to_paid = s.days_placed_to_paid,
+        t.days_paid_to_shipped = s.days_paid_to_shipped,
+        t.days_shipped_to_delivered = s.days_shipped_to_delivered,
+        t.days_placed_to_delivered = s.days_placed_to_delivered,
+        t.updated_at = s.updated_at,
+        t._loaded_at = s._loaded_at,
+        t._source_batch_id = s._source_batch_id
 WHEN NOT MATCHED THEN INSERT (
     order_sk, order_id, customer_id, product_id, quantity, price, status,
     placed_at, paid_at, shipped_at, delivered_at, cancelled_at,
