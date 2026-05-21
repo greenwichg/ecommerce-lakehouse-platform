@@ -239,3 +239,98 @@ to give a working visual. OK?
 **Awaiting your review and answers to Q1–Q7 before proceeding.** I'll
 not write any further code until you confirm scope and the unresolved
 choices above.
+
+---
+
+## Session Recap (post-Slice 0 + Slice 1)
+
+### Completed
+
+**Slice 0 — Scaffolding** (5 commits, ~9 files)
+
+- `pyproject.toml`, `.gitignore`, `.sqlfluff`, lint workflow
+- `config/{base,dev,prod,local.yaml.example}.yaml`
+- README with mermaid + status table
+- Pre-slice 1: pytest test dirs co-located with code
+  (`databricks/tests`, `orchestration/tests`)
+
+**Slice 1 — Orders end-to-end** (~15 commits, ~30 files, 100 tests)
+
+| Layer | Files | Tests |
+|-------|-------|-------|
+| `libs/{config,paths,batch,quality}.py` | 4 | 34 |
+| `libs/{bronze,silver,gold}.py` | 3 | 39 |
+| `generators/{_common,orders}.py` | 2 | 16 |
+| `databricks/notebooks/{bronze,silver,gold}/*.py` | 4 | (validated via libs tests) |
+| `snowflake/{ddl,dml,tests}/*.sql` | 10 | 5 SQL test files |
+| `orchestration/dags/{daily_batch_pipeline,callbacks,dq_gates}.py` | 3 | 11 |
+| `docs/{architecture,runbook}.md` | 2 | — |
+
+### Deviations from the original plan
+
+1. **Generator volume interpretation**. The spec's "~1000/day, 2% late,
+   1% updates" is read as "1000 *new placed* records/day" with natural
+   transitions emitted in addition (so the accumulating snapshot has
+   signal). Documented in `generators/orders.py` and the runbook.
+
+2. **Directory rename airflow/ → orchestration/**. Necessary because a
+   top-level `airflow/` directory acts as a namespace package and
+   shadows the real `airflow` PyPI package on sys.path. The spec
+   doesn't mandate the directory name, just the DAG filenames.
+
+3. **Root `conftest.py` with eager imports**. Pytest's
+   `importmode=importlib` + the Airflow test tree caused a sys.path
+   drop between conftest load and test collection (reproducible when
+   `generators/` and `orchestration/` test trees run interleaved). The
+   conftest eagerly imports `generators` and `libs` to inoculate.
+
+4. **`ruff N812` ignored project-wide**. `from pyspark.sql import
+   functions as F` is the universal PySpark idiom; ruff's
+   non-lowercase-import-alias warning would fire on every Spark file.
+
+5. **One bug found and fixed mid-slice**: `_snapshot()` was nulling
+   `paid_at`/`shipped_at` on cancellation records even when the order
+   had progressed past those stages. Fixed in commit `d622fcc` with a
+   forced-cancellation test before silver/gold MERGE logic was wired up.
+
+### Open items for Slice 2
+
+- Customers + Products generators with SCD2 trigger fields
+- `dim_customer` / `dim_product` SCD2 in Gold + Snowflake (populates
+  the `customer_sk` / `product_sk` placeholders in `fact_orders`)
+- Dynamic task mapping in the daily DAG (one task per source)
+- Hardcoded 20% DQ threshold moves to `config/base.yaml`
+- `SYSTEM$CLUSTERING_INFORMATION` before/after data once real loads run
+- Real Snowflake / Databricks / AWS deployment is still deferred (per
+  Q2 "code-only" answer)
+
+### Tests + lint status at session end
+
+```
+pytest          → 100 passed (16 + 34 + 13 + 18 + 8 + 11)
+ruff check .    → All checks passed!
+black --check . → All clean
+sqlfluff        → not installed in this env; SQL is formatted to the
+                  .sqlfluff config and CI's glob-guarded job will pick
+                  it up automatically.
+```
+
+### Commit log (this session)
+
+```
+8bd9f7e docs: architecture decisions and operational runbook for Slice 1
+de95a3c feat(orchestration): daily_batch_pipeline Airflow DAG (orders end-to-end)
+e332c53 feat(snowflake): RAW/STAGING/ANALYTICS orders schema + COPY/MERGE load
+3fa9fd2 feat(databricks): gold fact_orders + accumulating snapshot for orders
+24f6c37 feat(databricks): silver dedup/watermark/MERGE + DQ quarantine for orders
+d622fcc fix(generators): preserve paid_at/shipped_at on cancelled order snapshots
+f34c7b8 feat(databricks): bronze auto-loader ingestion for orders + tests
+71c2a44 feat(generators): add idempotent orders generator with deterministic trajectories
+f8ce8a3 feat(libs): add config loader, path builders, and batch_id utilities
+de41767 chore: scaffold test directories and per-developer config override
+aaca2d1 docs: add README with architecture diagram, status table, and setup guide
+3522e3b ci: add lint workflow for ruff, black, and sqlfluff
+6fbcf79 chore: add layered environment configs (base/dev/prod)
+1b30a3e chore: add Python project config, gitignore, and SQL linter setup
+1000bb0 docs: add PLAN.md with vertical-slice implementation plan and clarifying questions
+```

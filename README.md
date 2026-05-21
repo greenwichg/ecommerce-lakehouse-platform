@@ -17,7 +17,7 @@ next. See [`PLAN.md`](PLAN.md) for the slice plan.
 | Slice | Scope | Status |
 |-------|-------|--------|
 | 0 | Project scaffolding, CI lint, layered configs | ✅ done |
-| 1 | **Orders** end-to-end: generator → S3 → Bronze → Silver → Gold → Snowflake → Airflow → tests | 🚧 in progress |
+| 1 | **Orders** end-to-end: generator → S3 → Bronze → Silver → Gold → Snowflake → Airflow → tests | ✅ done |
 | 2 | Customers + Products (SCD2 dimensions) | ⏳ pending |
 | 3 | Clickstream + hourly DAG + sessionization | ⏳ pending |
 | 4 | Currency rates + remaining marts | ⏳ pending |
@@ -58,18 +58,22 @@ flowchart LR
 
 ```
 .
-├── airflow/dags/          Airflow DAGs (daily / hourly / weekly)
+├── orchestration/         Airflow DAGs (named non-"airflow" to avoid
+│   ├── dags/              shadowing the airflow PyPI package on sys.path)
+│   └── tests/
 ├── config/                Layered YAML configs (base + per-env)
 ├── databricks/
 │   ├── libs/              Importable Python modules (shared transform logic)
-│   └── notebooks/         {bronze,silver,gold}/ notebooks
+│   ├── notebooks/         {bronze,silver,gold}/ notebooks
+│   └── tests/             pytest + chispa tests for libs
 ├── data/                  Local dev data (gitignored except mock/)
 ├── docs/                  Architecture + runbook
 ├── generators/            Source data generators
-├── infrastructure/        Terraform
+├── infrastructure/        Terraform (Slice 5)
 ├── snowflake/             DDL, DML, SQL tests
-├── streamlit_app/         Dashboard
-├── tests/                 pytest tree mirrors source dirs
+├── streamlit_app/         Dashboard (Slice 6)
+├── tests/                 Generator tests + cross-cutting tests
+├── conftest.py            Root conftest: sys.path + eager imports
 ├── PLAN.md                Implementation plan
 └── README.md              This file
 ```
@@ -122,6 +126,13 @@ export AIRFLOW_HOME="$(pwd)/.airflow"
 airflow db migrate
 airflow dags list-import-errors          # must be empty
 airflow dags test daily_batch_pipeline 2025-05-01
+```
+
+The DAG-import tests in `orchestration/tests/test_dag_imports.py` cover
+the same ground without needing an initialised Airflow metadata DB:
+
+```bash
+pytest orchestration/tests -q
 ```
 
 ### Local end-to-end (Slice 1)
