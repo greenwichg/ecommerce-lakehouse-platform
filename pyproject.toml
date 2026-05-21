@@ -84,13 +84,15 @@ extend-exclude = '''
 
 [tool.pytest.ini_options]
 # Tests live next to the code they exercise: generators -> tests/, Databricks
-# libs -> databricks/tests/, Airflow DAGs -> airflow/tests/. Top-level tests/
-# also catches cross-cutting tests.
-testpaths = ["tests", "databricks/tests", "airflow/tests"]
+# libs -> databricks/tests/, Airflow DAGs -> orchestration/tests/. Top-level
+# tests/ also catches cross-cutting tests.
+# (orchestration/ is the Airflow-DAGs dir; named with a non-"airflow" prefix so
+# its presence on sys.path doesn't shadow the real `airflow` PyPI package.)
+testpaths = ["tests", "databricks/tests", "orchestration/tests"]
 # generators/ is importable as-is; databricks/libs/ is reached by putting databricks/ on the path
-# so notebooks and tests both write `from libs.x import y`. airflow/ is added so DAG-level
-# helpers (callbacks, dq_gates) can be imported by airflow/tests/.
-pythonpath = [".", "databricks", "airflow"]
+# so notebooks and tests both write `from libs.x import y`. orchestration/dags/ is on the path
+# so DAG helpers (callbacks, dq_gates) can be imported by orchestration/tests/.
+pythonpath = [".", "databricks", "orchestration/dags"]
 # importlib-mode avoids the "two conftest.py with the same package name" collision
 # we'd otherwise hit when test trees mirror each other (tests/, databricks/tests/, ...).
 addopts = "--import-mode=importlib"

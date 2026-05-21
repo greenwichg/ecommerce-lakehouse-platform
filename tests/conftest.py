@@ -1,12 +1,23 @@
-"""Top-level pytest fixtures shared across test trees."""
+"""Top-level pytest fixtures shared across test trees.
+
+This conftest also defensively re-adds the repo root to ``sys.path``. The
+``orchestration/tests`` conftest imports Airflow, and some of Airflow's
+init machinery clobbers ``sys.path`` in a way that strips the entry
+``pytest`` adds via ``[tool.pytest.ini_options].pythonpath``. Without this
+guard, running the orchestration suite before / interleaved with the
+top-level ``tests/`` suite breaks ``from generators.x import y``.
+"""
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 
 @pytest.fixture()
