@@ -8,6 +8,11 @@ variable "sfn_role_arn" {
   type        = string
 }
 
+variable "helper_lambda_role_arn" {
+  description = "IAM role ARN for the quarantine-helper Lambda. Distinct from sfn_role_arn — Lambda trusts lambda.amazonaws.com, SFN trusts states.amazonaws.com."
+  type        = string
+}
+
 variable "log_group_arn" {
   description = "CloudWatch log group ARN for state machine execution logs."
   type        = string

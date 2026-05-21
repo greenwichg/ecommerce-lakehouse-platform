@@ -22,10 +22,7 @@
 # different IAM needs — delete from quarantine, Airflow API key, etc.).
 resource "aws_lambda_function" "quarantine_helper" {
   function_name = "${var.name_prefix}-quarantine-helper"
-  role          = var.sfn_role_arn  # IAM module's SFN role grants the
-                                     # quarantine-related actions; also
-                                     # used here to keep the policy in
-                                     # one place.
+  role          = var.helper_lambda_role_arn
   package_type  = "Image"
   image_uri     = "placeholder.dkr.ecr.us-east-1.amazonaws.com/lakehouse-quarantine-helper:latest"
 
@@ -38,6 +35,33 @@ resource "aws_lambda_function" "quarantine_helper" {
       AIRFLOW_SECRET_NAME  = "${var.name_prefix}/airflow-api-creds"
     }
   }
+
+  tags = var.tags
+}
+
+# Resource-based policy: explicitly allow the state machine to invoke
+# the helper. The role policy on the SFN side already grants this, but
+# the resource-based policy makes the relationship discoverable from
+# the Lambda's side (and required if we later attach a service control
+# policy that blocks role-based invocation across services).
+resource "aws_lambda_permission" "sfn_invokes_helper" {
+  statement_id  = "AllowStepFunctionsInvokeHelper"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.quarantine_helper.function_name
+  principal     = "states.amazonaws.com"
+  source_arn    = aws_sfn_state_machine.quarantine_replay.arn
+}
+
+# Same for the validator Lambda — needed for the WaitForOperatorDecision
+# activity-task pattern where SFN passes a task token into a Lambda
+# invocation and the Lambda's response (or send-task-success from the
+# operator) completes the state.
+resource "aws_lambda_permission" "sfn_invokes_validator" {
+  statement_id  = "AllowStepFunctionsInvokeValidator"
+  action        = "lambda:InvokeFunction"
+  function_name = element(split(":", var.validator_function_arn), 6)
+  principal     = "states.amazonaws.com"
+  source_arn    = aws_sfn_state_machine.quarantine_replay.arn
 }
 
 resource "aws_sfn_state_machine" "quarantine_replay" {

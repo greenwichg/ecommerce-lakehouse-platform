@@ -32,6 +32,14 @@ locals {
       # but if we switch to a paid provider in Slice 6+ the secret exists.
       api_key = "PLACEHOLDER_NOT_CURRENTLY_USED"
     })
+    "airflow-api-creds" = jsonencode({
+      # Quarantine-replay state machine's replay branch hits the Airflow
+      # REST API to kick off the daily DAG against the recovered file.
+      # MWAA exposes this on https://<env>.<region>.airflow.amazonaws.com.
+      base_url = "https://PLACEHOLDER.airflow.amazonaws.com"
+      username = "lakehouse_replay"
+      password = "PLACEHOLDER_REPLACE_VIA_PUT_SECRET_VALUE"
+    })
   }
 }
 

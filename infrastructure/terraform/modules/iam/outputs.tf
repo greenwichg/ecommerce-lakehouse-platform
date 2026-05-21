@@ -18,6 +18,11 @@ output "lambda_role_arn" {
   value       = aws_iam_role.lambda.arn
 }
 
+output "lambda_helper_role_arn" {
+  description = "IAM role ARN for the quarantine-helper Lambda (invoked by Step Functions)."
+  value       = aws_iam_role.lambda_helper.arn
+}
+
 output "sfn_role_arn" {
   description = "IAM role ARN for the Step Functions state machine."
   value       = aws_iam_role.sfn.arn

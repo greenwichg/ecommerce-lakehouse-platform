@@ -108,6 +108,7 @@ module "step_functions" {
   source                  = "./modules/step_functions"
   name_prefix             = local.name_prefix
   sfn_role_arn            = module.iam.sfn_role_arn
+  helper_lambda_role_arn  = module.iam.lambda_helper_role_arn
   log_group_arn           = module.cloudwatch.sfn_log_group_arn
   validator_function_arn  = module.lambda_validator.function_arn
   alerts_topic_arn        = module.sns.alerts_topic_arn
