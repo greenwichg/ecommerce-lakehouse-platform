@@ -1,0 +1,217 @@
+{
+  "Comment": "Quarantine review + replay. Pauses on WaitForOperatorDecision (waitForTaskToken) until an operator calls SendTaskSuccess with one of three decisions: replay | discard | fix-and-replay.",
+  "StartAt": "NotifyOpsForReview",
+  "TimeoutSeconds": 604800,
+  "States": {
+    "NotifyOpsForReview": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${alerts_topic_arn}",
+        "Subject": "[lakehouse] Quarantine review needed",
+        "Message.$": "States.JsonToString($)"
+      },
+      "ResultPath": "$.notification",
+      "Next": "WaitForOperatorDecision"
+    },
+    "WaitForOperatorDecision": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "${validator_function_arn}",
+        "Payload": {
+          "action": "operator_decision_pending",
+          "task_token.$": "$$.Task.Token",
+          "quarantine_key.$": "$.quarantine_key",
+          "reason.$": "$.reason"
+        }
+      },
+      "TimeoutSeconds": 604800,
+      "Catch": [
+        {
+          "ErrorEquals": ["States.Timeout"],
+          "Next": "OperatorTimedOut"
+        }
+      ],
+      "ResultPath": "$.decision",
+      "Next": "RouteOnDecision"
+    },
+    "RouteOnDecision": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.decision.decision",
+          "StringEquals": "replay",
+          "Next": "MoveBackToRaw"
+        },
+        {
+          "Variable": "$.decision.decision",
+          "StringEquals": "discard",
+          "Next": "DiscardFile"
+        },
+        {
+          "Variable": "$.decision.decision",
+          "StringEquals": "fix-and-replay",
+          "Next": "NotifyFixPath"
+        }
+      ],
+      "Default": "OperatorDecisionInvalid"
+    },
+    "MoveBackToRaw": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${helper_function_arn}",
+        "Payload": {
+          "action": "move_to_raw",
+          "quarantine_key.$": "$.quarantine_key",
+          "operator.$": "$.decision.operator"
+        }
+      },
+      "ResultPath": "$.move",
+      "Next": "TriggerAirflowDAG",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ]
+    },
+    "TriggerAirflowDAG": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${helper_function_arn}",
+        "Payload": {
+          "action": "trigger_airflow",
+          "dag_id": "daily_batch_pipeline",
+          "logical_date.$": "$.decision.logical_date"
+        }
+      },
+      "ResultPath": "$.airflow",
+      "Next": "ReplaySuccess",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 10,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "ReplayTriggerFailed",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "ReplaySuccess": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${alerts_topic_arn}",
+        "Subject": "[lakehouse] Replay completed",
+        "Message.$": "States.JsonToString($)"
+      },
+      "End": true
+    },
+    "ReplayTriggerFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${alerts_topic_arn}",
+        "Subject": "[lakehouse] Replay file moved but Airflow trigger failed",
+        "Message.$": "States.JsonToString($)"
+      },
+      "End": true
+    },
+    "DiscardFile": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${helper_function_arn}",
+        "Payload": {
+          "action": "discard",
+          "quarantine_key.$": "$.quarantine_key",
+          "operator.$": "$.decision.operator",
+          "reason.$": "$.decision.reason"
+        }
+      },
+      "ResultPath": "$.discard",
+      "Next": "DiscardLogged"
+    },
+    "DiscardLogged": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${alerts_topic_arn}",
+        "Subject": "[lakehouse] File discarded from quarantine",
+        "Message.$": "States.JsonToString($)"
+      },
+      "End": true
+    },
+    "NotifyFixPath": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${alerts_topic_arn}",
+        "Subject": "[lakehouse] Awaiting fixed file upload",
+        "Message.$": "States.Format('Upload corrected file to: s3://${bucket_id}/{}/_fixed/<filename>. State machine will resume when the fixed file appears.', $.quarantine_key)"
+      },
+      "ResultPath": "$.fix_notification",
+      "Next": "WaitForFixedFile"
+    },
+    "WaitForFixedFile": {
+      "Type": "Wait",
+      "Seconds": 300,
+      "Next": "PollForFixedFile"
+    },
+    "PollForFixedFile": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${helper_function_arn}",
+        "Payload": {
+          "action": "poll_for_fix",
+          "quarantine_key.$": "$.quarantine_key"
+        }
+      },
+      "ResultPath": "$.poll",
+      "Next": "FixedFilePresentChoice"
+    },
+    "FixedFilePresentChoice": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.poll.Payload.present",
+          "BooleanEquals": true,
+          "Next": "MoveBackToRaw"
+        }
+      ],
+      "Default": "WaitForFixedFile"
+    },
+    "OperatorTimedOut": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${alerts_topic_arn}",
+        "Subject": "[lakehouse] Quarantine review TIMED OUT after 7 days",
+        "Message.$": "States.JsonToString($)"
+      },
+      "End": true
+    },
+    "OperatorDecisionInvalid": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${alerts_topic_arn}",
+        "Subject": "[lakehouse] Operator returned invalid decision",
+        "Message.$": "States.JsonToString($)"
+      },
+      "End": true
+    }
+  }
+}
