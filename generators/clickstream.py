@@ -67,17 +67,27 @@ _ANONYMOUS_RATE = 0.30
 
 # Funnel probabilities — given that the visit reached the previous stage.
 _P_ADD_TO_CART = 0.30
-_P_CHECKOUT_GIVEN_ADD = 0.40   # → 12% of visits checkout
+_P_CHECKOUT_GIVEN_ADD = 0.40  # → 12% of visits checkout
 _P_PURCHASE_GIVEN_CHECKOUT = 0.55  # → 6.6% of visits purchase
 
 _EVENT_TYPES = ("page_view", "add_to_cart", "checkout", "purchase")
 _DEVICES = ("desktop", "mobile", "tablet")
 
 _PAGE_URLS = (
-    "/", "/products", "/products/featured", "/products/sale",
-    "/categories/electronics", "/categories/books", "/categories/clothing",
-    "/categories/home_kitchen", "/search?q=headphones", "/search?q=laptop",
-    "/cart", "/checkout", "/account", "/orders",
+    "/",
+    "/products",
+    "/products/featured",
+    "/products/sale",
+    "/categories/electronics",
+    "/categories/books",
+    "/categories/clothing",
+    "/categories/home_kitchen",
+    "/search?q=headphones",
+    "/search?q=laptop",
+    "/cart",
+    "/checkout",
+    "/account",
+    "/orders",
 )
 
 
@@ -151,9 +161,7 @@ def _build_visits_for_session(
     # Visit start hours, uniform in the horizon. Sorted so the timeline
     # is monotonic and Silver's window functions don't have to reorder
     # across cookie boundaries.
-    first_offset_hours = sorted(
-        rng.randint(0, _SESSION_HORIZON_HOURS) for _ in range(n_visits)
-    )
+    first_offset_hours = sorted(rng.randint(0, _SESSION_HORIZON_HOURS) for _ in range(n_visits))
 
     events: list[_Event] = []
     for visit_idx, hour_offset in enumerate(first_offset_hours):
@@ -165,7 +173,9 @@ def _build_visits_for_session(
         for pv in range(n_pv):
             events.append(
                 _Event(
-                    event_id=str(deterministic_uuid("event", seed, session_index, visit_idx, "pv", pv)),
+                    event_id=str(
+                        deterministic_uuid("event", seed, session_index, visit_idx, "pv", pv)
+                    ),
                     session_id=raw_session_id,
                     customer_id=customer_id,
                     event_type="page_view",
@@ -182,7 +192,9 @@ def _build_visits_for_session(
             cursor += dt.timedelta(seconds=rng.randint(10, 60))
             events.append(
                 _Event(
-                    event_id=str(deterministic_uuid("event", seed, session_index, visit_idx, "atc")),
+                    event_id=str(
+                        deterministic_uuid("event", seed, session_index, visit_idx, "atc")
+                    ),
                     session_id=raw_session_id,
                     customer_id=customer_id,
                     event_type="add_to_cart",
@@ -197,7 +209,9 @@ def _build_visits_for_session(
                 cursor += dt.timedelta(seconds=rng.randint(20, 180))
                 events.append(
                     _Event(
-                        event_id=str(deterministic_uuid("event", seed, session_index, visit_idx, "co")),
+                        event_id=str(
+                            deterministic_uuid("event", seed, session_index, visit_idx, "co")
+                        ),
                         session_id=raw_session_id,
                         customer_id=customer_id,
                         event_type="checkout",
@@ -212,7 +226,9 @@ def _build_visits_for_session(
                     cursor += dt.timedelta(seconds=rng.randint(15, 90))
                     events.append(
                         _Event(
-                            event_id=str(deterministic_uuid("event", seed, session_index, visit_idx, "p")),
+                            event_id=str(
+                                deterministic_uuid("event", seed, session_index, visit_idx, "p")
+                            ),
                             session_id=raw_session_id,
                             customer_id=customer_id,
                             event_type="purchase",
@@ -325,8 +341,12 @@ def run(
 
 
 @click.command()
-@click.option("--start-hour", required=True, type=click.DateTime(["%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H"]))
-@click.option("--end-hour", required=True, type=click.DateTime(["%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H"]))
+@click.option(
+    "--start-hour", required=True, type=click.DateTime(["%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H"])
+)
+@click.option(
+    "--end-hour", required=True, type=click.DateTime(["%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H"])
+)
 @click.option("--env", default=None)
 @click.option("--seed", default=None, type=int)
 @click.option("--session-pool-size", default=None, type=int)

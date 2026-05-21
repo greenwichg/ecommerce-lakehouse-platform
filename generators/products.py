@@ -122,9 +122,7 @@ def _build_timeline(
             current_price = round(current_price * rng.uniform(0.75, 1.25), 2)
             current_price = max(cfg["price_min"], min(cfg["price_max"], current_price))
         else:
-            current_category = rng.choice(
-                [c for c in _CATEGORIES if c != current_category]
-            )
+            current_category = rng.choice([c for c in _CATEGORIES if c != current_category])
         versions.append(
             _ProductVersion(
                 effective_from=dt.datetime.combine(change_date, dt.time(0, 0, 0), dt.UTC),
@@ -137,9 +135,7 @@ def _build_timeline(
     return versions
 
 
-def _current_version_at(
-    versions: list[_ProductVersion], date: dt.date
-) -> _ProductVersion | None:
+def _current_version_at(versions: list[_ProductVersion], date: dt.date) -> _ProductVersion | None:
     if not versions:
         return None
     cutoff = dt.datetime.combine(date, dt.time(23, 59, 59), dt.UTC)

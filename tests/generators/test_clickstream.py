@@ -52,8 +52,14 @@ def test_idempotent_same_args() -> None:
 
 def test_different_seed_different_session_ids() -> None:
     h = PROJECT_EPOCH + dt.timedelta(hours=100)
-    a_ids = {r["session_id"] for r in generate_for_hour(h, seed=42, session_pool_size=200, customer_pool_size=100)}
-    b_ids = {r["session_id"] for r in generate_for_hour(h, seed=99, session_pool_size=200, customer_pool_size=100)}
+    a_ids = {
+        r["session_id"]
+        for r in generate_for_hour(h, seed=42, session_pool_size=200, customer_pool_size=100)
+    }
+    b_ids = {
+        r["session_id"]
+        for r in generate_for_hour(h, seed=99, session_pool_size=200, customer_pool_size=100)
+    }
     if a_ids and b_ids:
         assert a_ids.isdisjoint(b_ids)
 
@@ -82,8 +88,16 @@ def _records_in_first_busy_hour(pool: int = 2000) -> list[dict]:
 
 def test_event_schema_keys_present() -> None:
     records = _records_in_first_busy_hour()
-    required = {"event_id", "session_id", "customer_id", "event_type",
-                "page_url", "event_ts", "device", "user_agent"}
+    required = {
+        "event_id",
+        "session_id",
+        "customer_id",
+        "event_type",
+        "page_url",
+        "event_ts",
+        "device",
+        "user_agent",
+    }
     for r in records:
         assert set(r.keys()) == required
 
@@ -101,7 +115,9 @@ def test_anonymous_rate_approximately_30pct() -> None:
     all_events = []
     for h_off in range(0, 200, 8):
         h = PROJECT_EPOCH + dt.timedelta(hours=h_off)
-        all_events.extend(generate_for_hour(h, seed=42, session_pool_size=500, customer_pool_size=100))
+        all_events.extend(
+            generate_for_hour(h, seed=42, session_pool_size=500, customer_pool_size=100)
+        )
     anon = sum(1 for r in all_events if r["customer_id"] is None)
     if not all_events:
         pytest.skip("not enough sampled events")
@@ -122,7 +138,8 @@ def test_purchase_implies_prior_funnel_stages() -> None:
             # All earlier events in the same cookie, within 30 min before, must
             # include at least page_view, add_to_cart, checkout
             earlier = [
-                e for e in events
+                e
+                for e in events
                 if e.event_ts < purchase.event_ts
                 and (purchase.event_ts - e.event_ts) < dt.timedelta(minutes=30)
             ]
@@ -144,7 +161,9 @@ def test_intra_visit_events_within_30min() -> None:
         visit_groups: list[list] = []
         current_group: list = []
         for e in events_sorted:
-            if not current_group or (e.event_ts - current_group[-1].event_ts) < dt.timedelta(minutes=30):
+            if not current_group or (e.event_ts - current_group[-1].event_ts) < dt.timedelta(
+                minutes=30
+            ):
                 current_group.append(e)
             else:
                 visit_groups.append(current_group)
@@ -225,18 +244,26 @@ def test_run_writes_hourly_partitions(clickstream_test_cfg: dict, tmp_path: Path
     start = PROJECT_EPOCH + dt.timedelta(hours=24)
     end = PROJECT_EPOCH + dt.timedelta(hours=26)  # 3 hours inclusive
     written = run(
-        start_hour=start, end_hour=end, bucket=bucket,
-        cfg=clickstream_test_cfg, seed=42,
-        session_pool_size=200, customer_pool_size=100,
+        start_hour=start,
+        end_hour=end,
+        bucket=bucket,
+        cfg=clickstream_test_cfg,
+        seed=42,
+        session_pool_size=200,
+        customer_pool_size=100,
     )
     assert len(written) == 3
     for h_off in range(3):
         h = start + dt.timedelta(hours=h_off)
         expected = (
             tmp_path
-            / "raw" / "clickstream"
-            / f"year={h.year:04d}" / f"month={h.month:02d}" / f"day={h.day:02d}"
-            / f"hour={h.hour:02d}" / "events.json"
+            / "raw"
+            / "clickstream"
+            / f"year={h.year:04d}"
+            / f"month={h.month:02d}"
+            / f"day={h.day:02d}"
+            / f"hour={h.hour:02d}"
+            / "events.json"
         )
         assert expected.is_file(), f"missing {expected}"
 
@@ -252,12 +279,24 @@ def test_run_output_is_valid_json_lines(clickstream_test_cfg: dict, tmp_path: Pa
     else:
         raise AssertionError("no busy hour found")
 
-    run(start_hour=h, end_hour=h, bucket=bucket, cfg=clickstream_test_cfg,
-        seed=42, session_pool_size=2000, customer_pool_size=100)
+    run(
+        start_hour=h,
+        end_hour=h,
+        bucket=bucket,
+        cfg=clickstream_test_cfg,
+        seed=42,
+        session_pool_size=2000,
+        customer_pool_size=100,
+    )
     path = (
-        tmp_path / "raw" / "clickstream"
-        / f"year={h.year:04d}" / f"month={h.month:02d}" / f"day={h.day:02d}"
-        / f"hour={h.hour:02d}" / "events.json"
+        tmp_path
+        / "raw"
+        / "clickstream"
+        / f"year={h.year:04d}"
+        / f"month={h.month:02d}"
+        / f"day={h.day:02d}"
+        / f"hour={h.hour:02d}"
+        / "events.json"
     )
     with path.open() as f:
         lines = [line.strip() for line in f if line.strip()]
@@ -272,14 +311,37 @@ def test_run_idempotent_bytes_equivalent(clickstream_test_cfg: dict, tmp_path: P
     bucket_b = f"file://{tmp_path / 'b'}"
     h = PROJECT_EPOCH + dt.timedelta(hours=100)
     for bucket in (bucket_a, bucket_b):
-        run(start_hour=h, end_hour=h, bucket=bucket, cfg=clickstream_test_cfg,
-            seed=42, session_pool_size=300, customer_pool_size=100)
-    a = (tmp_path / "a" / "raw" / "clickstream" / f"year={h.year:04d}"
-         / f"month={h.month:02d}" / f"day={h.day:02d}" / f"hour={h.hour:02d}"
-         / "events.json").read_bytes()
-    b = (tmp_path / "b" / "raw" / "clickstream" / f"year={h.year:04d}"
-         / f"month={h.month:02d}" / f"day={h.day:02d}" / f"hour={h.hour:02d}"
-         / "events.json").read_bytes()
+        run(
+            start_hour=h,
+            end_hour=h,
+            bucket=bucket,
+            cfg=clickstream_test_cfg,
+            seed=42,
+            session_pool_size=300,
+            customer_pool_size=100,
+        )
+    a = (
+        tmp_path
+        / "a"
+        / "raw"
+        / "clickstream"
+        / f"year={h.year:04d}"
+        / f"month={h.month:02d}"
+        / f"day={h.day:02d}"
+        / f"hour={h.hour:02d}"
+        / "events.json"
+    ).read_bytes()
+    b = (
+        tmp_path
+        / "b"
+        / "raw"
+        / "clickstream"
+        / f"year={h.year:04d}"
+        / f"month={h.month:02d}"
+        / f"day={h.day:02d}"
+        / f"hour={h.hour:02d}"
+        / "events.json"
+    ).read_bytes()
     assert a == b
 
 

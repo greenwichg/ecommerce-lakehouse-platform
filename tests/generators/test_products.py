@@ -78,9 +78,9 @@ def test_price_stays_in_bounds_across_versions(products_test_cfg: dict) -> None:
     for index in range(20):
         versions = _build_timeline(index, 42, cfg, date)
         for v in versions:
-            assert cfg["price_min"] <= v.price <= cfg["price_max"], (
-                f"product {index} v.price {v.price} out of bounds"
-            )
+            assert (
+                cfg["price_min"] <= v.price <= cfg["price_max"]
+            ), f"product {index} v.price {v.price} out of bounds"
 
 
 def test_category_drift_flips_to_different_category(products_test_cfg: dict) -> None:
@@ -141,10 +141,7 @@ def test_run_writes_csv_with_header(products_test_cfg: dict, tmp_path: Path) -> 
         seed=42,
         record_count=10,
     )
-    csv_path = (
-        tmp_path / "raw" / "products"
-        / "year=2025" / "month=06" / "day=01" / "products.csv"
-    )
+    csv_path = tmp_path / "raw" / "products" / "year=2025" / "month=06" / "day=01" / "products.csv"
     assert csv_path.is_file()
     with csv_path.open() as f:
         reader = csv.DictReader(f)
@@ -169,8 +166,12 @@ def test_run_idempotent_bytes_equivalent(products_test_cfg: dict, tmp_path: Path
             seed=42,
             record_count=10,
         )
-    a = (tmp_path / "a" / "raw" / "products" / "year=2025" / "month=06" / "day=01" / "products.csv").read_bytes()
-    b = (tmp_path / "b" / "raw" / "products" / "year=2025" / "month=06" / "day=01" / "products.csv").read_bytes()
+    a = (
+        tmp_path / "a" / "raw" / "products" / "year=2025" / "month=06" / "day=01" / "products.csv"
+    ).read_bytes()
+    b = (
+        tmp_path / "b" / "raw" / "products" / "year=2025" / "month=06" / "day=01" / "products.csv"
+    ).read_bytes()
     assert a == b
 
 
@@ -189,7 +190,8 @@ def test_run_writes_one_file_per_partition(products_test_cfg: dict, tmp_path: Pa
         date = dt.date(2025, 6, 1) + dt.timedelta(days=offset)
         expected = (
             tmp_path
-            / "raw" / "products"
+            / "raw"
+            / "products"
             / f"year={date.year:04d}"
             / f"month={date.month:02d}"
             / f"day={date.day:02d}"
