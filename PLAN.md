@@ -414,3 +414,70 @@ df86b8a feat(libs): SCD2 MERGE primitive with deterministic SHA-256 surrogates +
 7ac3e47 feat(orchestration): promote DQ thresholds to config + add orphan-rate gate
 9de871f fix(snowflake): adopt Airflow-jinja placeholders + raise sqlfluff line length
 ```
+
+---
+
+## Session Recap (Slice 3)
+
+### Completed
+
+**Slice 3 — Clickstream + hourly DAG + Snowpipe/Streams/Tasks + Dataset triggering** (~8 commits, ~22 files, +40 tests over Slice 2)
+
+| Area | Files | Tests |
+|------|-------|-------|
+| `generators/clickstream.py` (JSON, hourly partitions, session timelines) | 1 | 16 |
+| `databricks/libs/sessionize.py` (gap-and-island + build_fact_sessions) | 1 | 11 |
+| `databricks/libs/quality.py` (+CLICKSTREAM_RULES) | (modified) | — |
+| `databricks/notebooks/{bronze,silver,gold}/*_clickstream.py` + `gold_fact_sessions.py` | 3 | — |
+| `snowflake/ddl/{23,42,50}_*.sql` (staging + analytics + Snowpipe/Stream/Task) + stages | 3 | — |
+| `snowflake/tests/test_fact_sessions_*.sql` | 3 | — |
+| `orchestration/dags/{hourly_clickstream_pipeline,dashboard_refresh,_datasets}.py` | 3 | 11 (in test_dag_imports.py) |
+| `docs/architecture.md` + `docs/runbook.md` (Slice 3 sections) | (modified) | — |
+
+**Final test count: 197 passing** (was 157). Lint clean across `ruff`, `black`, `sqlfluff`.
+
+### Deviations from the original plan
+
+1. **`max_by` semantic gotcha caught by test** — Spark's `max_by(value, key)` ignores rows where the *key* is NULL, but NOT rows where the *value* is NULL. So `max_by(customer_id, event_ts)` would return NULL whenever the latest event is anonymous, even if earlier events had a non-null customer. Fix: rank-by-null via `max_by(customer_id, IF(customer_id IS NOT NULL, event_ts))`. The trailing-null test case (`test_max_by_ignores_null_customer_in_middle`) caught this on the first run. Documented inline in `libs/sessionize.py`.
+
+2. **Test density vs production density** — clickstream sessions are spread over 17,520 hours (730 days × 24). With test pools of 500-2000 cookies, many specific hours are empty. Added `_records_in_first_busy_hour()` helper that sweeps for a non-empty hour. Production-scale pools (100k cookies) give ~290 events/hour and never hit this.
+
+3. **`lru_cache` on `_build_visits_for_session`** — without caching, the test suite took 240s because each generate_for_hour call rebuilt every cookie's timeline from scratch. Caching cut runtime to 21s (11×).
+
+4. **Watermark in batch mode** documented loudly in `silver_clickstream.py` and `docs/architecture.md` — per your pushback, the "10-min watermark" is NOT a current-batch filter. Trap worth flagging.
+
+5. **`metadata$action` qualification for sqlfluff** — `WHERE METADATA$ACTION = 'INSERT'` works at runtime but sqlfluff's `references.qualification` rule wanted it qualified as `s.metadata$action`. Did so; Snowflake accepts both.
+
+6. **sqlfluff autofix mangled the Snowpipe SNS topic literal** — stripped the leading single quote. Caught and reverted. Note for future Slices: sqlfluff fix can occasionally over-edit; always re-lint after fix.
+
+### sys.path verification (per Q4)
+
+Held cleanly through Slice 3. New `generators.clickstream` and new `libs.sessionize` are submodules of already-eagerly-imported packages, no conftest changes needed. The `_datasets.py` helper is underscore-prefixed and excluded from DAG-import discovery. No `pip install -e .` switch needed.
+
+### Open items for Slice 4
+
+- Currency rates generator + Bronze/Silver/Gold
+- `daily_revenue_by_category` mart
+- `customer_ltv` mart
+- One Snowflake materialized view (expensive aggregation)
+- One factless fact table (wishlist relationships)
+- Free-API integration with simulated fallback
+
+### Tests + lint status at session end
+
+```
+pytest          → 197 passed (was 157)
+ruff check .    → All checks passed!
+black --check . → All clean
+sqlfluff lint snowflake/ → All Finished! (0 violations)
+```
+
+### Commit log (Slice 3)
+
+```
+0ac4d4a feat(orchestration): hourly_clickstream_pipeline + dashboard_refresh + Dataset triggering
+fb29540 feat(snowflake): clickstream staging + analytics + Snowpipe/Stream/Task
+2163c91 feat(databricks): bronze + silver + gold notebooks for clickstream
+3385088 feat(libs): clickstream sessionization + fact_sessions builder + tests
+7310753 feat(generators): clickstream JSON generator with hourly partitions + tests
+```

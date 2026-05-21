@@ -259,3 +259,60 @@ of a full workspace:
 
 For full feature exercise, the project assumes a real Databricks
 workspace (Standard or Premium tier).
+
+## Clickstream specifics (Slice 3)
+
+### Shared-device limitation
+
+Cookie-based sessionization collapses two physical humans on the same
+device + browser into one session. This is the same limitation every
+cookie-based sessionizer has (Google Analytics, Adobe, Snowplow). Worth
+flagging because:
+
+- Visible in `fact_sessions` as sessions with mid-session
+  `attributed_customer_id` changes that aren't sign-in events.
+- Not actionable — accept and document.
+
+A future enhancement (Slice 6+) could add a `device_fingerprint` derived
+column that splits sessions when fingerprint shifts.
+
+### Snowpipe pipeline status
+
+In production, check Snowpipe + Streams + Tasks health with:
+
+```sql
+-- Pipe status (latency, file backlog)
+SELECT SYSTEM$PIPE_STATUS('staging.pipe_fact_sessions_ingest');
+
+-- Stream has unprocessed data?
+SELECT SYSTEM$STREAM_HAS_DATA('staging.stream_fact_sessions');
+
+-- Task run history
+SELECT *
+FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY(
+    SCHEDULED_TIME_RANGE_START => DATEADD('HOUR', -24, CURRENT_TIMESTAMP()),
+    TASK_NAME => 'analytics.enrich_and_merge_fact_sessions'
+))
+ORDER BY scheduled_time DESC;
+```
+
+### Sessionization regression diagnosis
+
+If `fact_sessions.event_count = 1` becomes the modal value, the
+sessionizer is treating each event as its own session — likely a bug in
+the window function ordering or the gap predicate. Check:
+
+1. `silver_session_key` distribution: should have many keys per cookie
+   for active users, not 1:1 with events.
+2. Generator's intra-visit gap (test_intra_visit_events_within_30min):
+   if events within a visit are spaced > 30 min, every event becomes
+   its own session.
+
+### Watermark misconception trap
+
+If you're tempted to add `apply_watermark()` to `silver_clickstream.py`,
+read the docstring at the top of that notebook first. Dropping events
+from the current batch based on a 10-min watermark would silently
+discard data — the watermark is a *next-batch coordination* concept,
+not a current-batch filter. Documented because we hit this during
+design and the next maintainer probably will too.

@@ -200,3 +200,87 @@ silver writes/day):
 
 Recommended path for portfolio / demo: self-hosted Airflow on a single
 EC2 `t3.small` brings the monthly total to <$60.
+
+---
+
+## Slice 3 additions
+
+### Sessionization: gap-and-island on `raw_session_id`
+
+The clickstream generator emits a `session_id` field that represents
+the upstream tracker's cookie identity. One cookie can host many
+sessions over time, separated by >30 minutes of inactivity. Silver's
+sessionizer recomputes the *session* identity:
+
+```
+silver_session_key = sha256(raw_session_id || '|' || session_seq)
+```
+
+`session_seq` is the cumulative count of "new session" boundaries
+within a cookie (gap > 30 min OR first event), computed via window-
+function lag + cumulative sum. The textbook gap-and-island pattern.
+
+Why not Spark Structured Streaming `session_window`: our Silver runs
+batch (`availableNow=True`), not streaming. Mixing modes adds confusion
+without gain. Gap-and-island ports cleanly to dbt / Snowflake Tasks if
+we ever want to push the work down later.
+
+Customer attribution uses `max_by(customer_id, IF(customer_id IS NOT
+NULL, event_ts))` — the rank-by-null trick (Spark `max_by` ignores NULL
+keys, not NULL values, so a trailing anonymous event after a sign-in
+would blank attribution under naive `max_by(customer_id, event_ts)`).
+Caught during design; documented inline in `libs/sessionize.py`.
+
+### Watermark in batch mode: coordination boundary, not filter
+
+The "10-minute watermark" for clickstream is **not** a current-batch
+filter that drops late events. In batch mode (`availableNow=True`),
+every event in the current bronze batch must be processed.
+
+The 10-minute window is a *next-batch coordination boundary*: any
+session whose end is within 10 minutes of `max(event_ts)` may still
+grow in the next batch (events from this batch's tail-end could land in
+the next batch and extend the same session). The Silver MERGE handles
+that naturally via newer-`session_end`-wins.
+
+This semantic mismatch with streaming watermarks bit us during design.
+Documented in `silver_clickstream.py`'s top-of-file docstring so the
+next maintainer doesn't accidentally add an `apply_watermark()` call
+that would drop legitimate events.
+
+### Snowpipe + Streams + Tasks: parallel to the Databricks PIT join
+
+The Snowflake-side flow for `fact_sessions` intentionally mirrors the
+Databricks-side PIT join used for `fact_orders` (`libs/gold.pit_join_scd2`).
+Both layers do "fact → dim PIT binding" enrichment; having one in each
+platform lets reviewers compare the two flavors:
+
+| | Databricks (`fact_orders`) | Snowflake (`fact_sessions`) |
+|---|---|---|
+| Engine | Spark | Snowflake |
+| API | DataFrame + `broadcast(dim)` | SQL + range JOIN on `effective_from`/`effective_to` |
+| Trigger | Airflow Databricks job (scheduled) | Snowflake Task (5-min schedule) |
+| Cost control | Job cluster spot price | `WHEN SYSTEM$STREAM_HAS_DATA(...)` makes the Task a no-op when idle |
+
+The cost-aware `WHEN` clause is the key Snowflake cost pattern — without
+it, the task would warm the warehouse every 5 minutes regardless of
+whether new data arrived. Standard Snowflake idiom; signals cost
+awareness in interviews.
+
+### Dataset triggering: separate consumer DAG, not hybrid scheduling
+
+`hourly_clickstream_pipeline` publishes `DATASET_FACT_SESSIONS` on
+success. A separate `dashboard_refresh` DAG consumes it via
+`schedule=[DATASET_FACT_SESSIONS]`.
+
+We **deliberately did not** put the Dataset on the daily DAG's schedule
+(via `DatasetOrTimeSchedule`). That would have fired the daily 24× per
+day (once per hourly publish) plus its 02:00 cron run — wasted
+Snowflake credits for full SCD2 MERGEs that don't need hourly cadence.
+
+**Pattern**:
+- **Cron for source-of-truth refreshes** (the daily DAG).
+- **Dataset triggering for downstream consumers** that only need to
+  react to fresh upstream signal (the dashboard refresh).
+
+Each DAG has one job; failures are isolated; SLAs are meaningful.
