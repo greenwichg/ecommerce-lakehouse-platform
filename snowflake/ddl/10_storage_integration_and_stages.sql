@@ -53,3 +53,10 @@ CREATE STAGE IF NOT EXISTS gold_dim_product_stage
     STORAGE_INTEGRATION = lakehouse_s3_integration
     FILE_FORMAT = gold_parquet_format
     COMMENT = 'External stage for dim_product SCD2 history Parquet files.';
+
+-- Slice 3: gold/fact_sessions stage feeds the Snowpipe auto-ingest below.
+CREATE STAGE IF NOT EXISTS gold_fact_sessions_stage
+    URL = 's3://{{ params.LAKEHOUSE_BUCKET }}/gold/fact_sessions/'
+    STORAGE_INTEGRATION = lakehouse_s3_integration
+    FILE_FORMAT = gold_parquet_format
+    COMMENT = 'External stage for fact_sessions Parquet files. Drives the Snowpipe.';
