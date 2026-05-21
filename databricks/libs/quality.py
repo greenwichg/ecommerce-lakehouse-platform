@@ -55,6 +55,40 @@ ORDERS_RULES: tuple[Rule, ...] = (
 )
 
 
+# Customers DQ rules (Slice 2). Mirrors the orders contract but for the
+# customer snapshot shape.
+CUSTOMERS_RULES: tuple[Rule, ...] = (
+    Rule("customer_id_not_null", "customer_id IS NOT NULL"),
+    Rule("name_not_null", "name IS NOT NULL"),
+    # email format check: simple "@ with non-empty local + domain" regex.
+    # Looser than RFC 5322 but catches obviously-broken values.
+    Rule(
+        "email_well_formed",
+        "email IS NULL OR email RLIKE '^[^@\\\\s]+@[^@\\\\s]+\\\\.[^@\\\\s]+$'",
+    ),
+    Rule("signup_date_not_future", "signup_date <= current_date()"),
+    Rule(
+        "updated_at_not_before_signup",
+        "updated_at >= CAST(signup_date AS TIMESTAMP)",
+    ),
+)
+
+
+# Products DQ rules (Slice 2).
+PRODUCTS_RULES: tuple[Rule, ...] = (
+    Rule("product_id_not_null", "product_id IS NOT NULL"),
+    Rule("product_name_not_null", "product_name IS NOT NULL"),
+    Rule("price_positive", "price > 0"),
+    Rule(
+        "category_known",
+        "category IN ('electronics', 'books', 'clothing', 'home_kitchen', "
+        "'sports_outdoors', 'toys_games', 'beauty', 'grocery', 'automotive', "
+        "'office')",
+    ),
+    Rule("sku_not_null", "sku IS NOT NULL"),
+)
+
+
 _QUARANTINE_COL = "_quarantine_reason"
 
 
