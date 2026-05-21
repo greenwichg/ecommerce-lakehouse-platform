@@ -27,7 +27,9 @@ def _import_all_dag_modules() -> list:
 
     modules = []
     for path in sorted(_DAGS_DIR.glob("*.py")):
-        if path.name in {"__init__.py", "callbacks.py", "dq_gates.py"}:
+        # Underscore-prefixed files (e.g. _datasets.py) and pure helper
+        # modules (callbacks, dq_gates) aren't DAG files.
+        if path.name in {"__init__.py", "callbacks.py", "dq_gates.py"} or path.name.startswith("_"):
             continue
         mod = importlib.import_module(path.stem)
         modules.append(mod)
@@ -203,3 +205,128 @@ def test_sources_constant_matches_spec() -> None:
     from daily_batch_pipeline import SOURCES
 
     assert SOURCES == ["orders", "customers", "products"]
+
+
+# ---------------------------------------------------------------------------
+# Slice 3 — hourly_clickstream_pipeline + dashboard_refresh
+# ---------------------------------------------------------------------------
+
+
+HOURLY_EXPECTED_TASKS = {
+    "wait_for_clickstream_raw",
+    "emit_batch_id",
+    "bronze_clickstream",
+    "silver_clickstream",
+    "gold_fact_sessions",
+    "publish_sessions_dataset",
+}
+
+
+def test_hourly_dag_imports() -> None:
+    from hourly_clickstream_pipeline import dag
+
+    assert dag.dag_id == "hourly_clickstream_pipeline"
+
+
+def test_hourly_dag_has_expected_tasks() -> None:
+    from hourly_clickstream_pipeline import dag
+
+    actual = {t.task_id for t in dag.tasks}
+    assert actual == HOURLY_EXPECTED_TASKS, f"diff: {actual ^ HOURLY_EXPECTED_TASKS}"
+
+
+def test_hourly_dag_schedule_is_hourly() -> None:
+    from hourly_clickstream_pipeline import dag
+
+    # @hourly normalises to a cron timetable internally
+    summary = dag.timetable.summary
+    assert (
+        "@hourly" in summary or "0 * * * *" in summary or "hour" in summary.lower()
+    ), f"unexpected schedule: {summary}"
+
+
+def test_hourly_dag_sla_is_15_minutes() -> None:
+    from datetime import timedelta
+
+    from hourly_clickstream_pipeline import dag
+
+    assert dag.default_args.get("sla") == timedelta(minutes=15)
+
+
+def test_hourly_dag_wiring() -> None:
+    from hourly_clickstream_pipeline import dag
+
+    by_id = {t.task_id: t for t in dag.tasks}
+    assert by_id["wait_for_clickstream_raw"].downstream_task_ids == {"emit_batch_id"}
+    assert by_id["emit_batch_id"].downstream_task_ids == {"bronze_clickstream"}
+    assert by_id["bronze_clickstream"].downstream_task_ids == {"silver_clickstream"}
+    assert by_id["silver_clickstream"].downstream_task_ids == {"gold_fact_sessions"}
+    assert by_id["gold_fact_sessions"].downstream_task_ids == {"publish_sessions_dataset"}
+
+
+def test_hourly_publishes_fact_sessions_dataset() -> None:
+    """The Dataset outlet wiring is the whole point of Slice 3's
+    cross-DAG triggering. If this regresses, dashboard_refresh stops
+    firing on new clickstream data."""
+    from _datasets import DATASET_FACT_SESSIONS
+    from hourly_clickstream_pipeline import dag
+
+    publish = dag.get_task("publish_sessions_dataset")
+    outlet_uris = {ds.uri for ds in (publish.outlets or [])}
+    assert DATASET_FACT_SESSIONS.uri in outlet_uris
+
+
+@pytest.mark.parametrize(
+    "task_id",
+    ["bronze_clickstream", "silver_clickstream", "gold_fact_sessions"],
+)
+def test_hourly_databricks_tasks_deferrable(task_id: str) -> None:
+    from hourly_clickstream_pipeline import dag
+
+    assert getattr(dag.get_task(task_id), "deferrable", False)
+
+
+def test_hourly_sensor_deferrable() -> None:
+    from hourly_clickstream_pipeline import dag
+
+    assert getattr(dag.get_task("wait_for_clickstream_raw"), "deferrable", False)
+
+
+def test_dashboard_refresh_imports() -> None:
+    from dashboard_refresh import dag
+
+    assert dag.dag_id == "dashboard_refresh"
+
+
+def test_dashboard_refresh_schedule_is_dataset() -> None:
+    """Daily DAG stays cron, dashboard_refresh is dataset-triggered. If
+    the schedule type regresses to cron, the separation-of-concerns
+    documented in docs/architecture.md is gone."""
+    from _datasets import DATASET_FACT_SESSIONS
+    from dashboard_refresh import dag
+
+    # Airflow 2.10: schedule=[dataset] builds a DatasetTriggeredTimetable
+    # whose dataset_condition exposes the constituent datasets via
+    # iter_datasets().
+    assert (
+        type(dag.timetable).__name__ == "DatasetTriggeredTimetable"
+    ), f"expected DatasetTriggeredTimetable, got {type(dag.timetable).__name__}"
+    # iter_datasets() in Airflow 2.10 yields (uri, Dataset) tuples
+    pairs = list(dag.timetable.dataset_condition.iter_datasets())
+    uris = {uri for uri, _ds in pairs}
+    assert (
+        DATASET_FACT_SESSIONS.uri in uris
+    ), f"dashboard_refresh should be triggered by {DATASET_FACT_SESSIONS.uri}, got {uris}"
+
+
+def test_dashboard_refresh_has_no_cron_schedule() -> None:
+    """Per the architecture decision: dashboard_refresh fires only on
+    upstream Dataset updates, NOT on a cron schedule. If someone adds a
+    cron to this DAG, they've defeated the separation of concerns."""
+    from dashboard_refresh import dag
+
+    # No cron expression in the schedule's summary
+    summary = dag.timetable.summary
+    assert (
+        "cron" not in summary.lower() or summary == "Never, external triggers only"
+    ), f"dashboard_refresh should be dataset-only, got: {summary}"
