@@ -54,12 +54,17 @@ paths:
   checkpoint_prefix: _checkpoints
   partitioning: "year={year:04d}/month={month:02d}/day={day:02d}"
 
-# Data quality. Hardcoded for now; will be threshold-tunable per-source in a
-# later slice (per session note).
+# Data quality thresholds. Read by Airflow's dq_gates and by gold notebooks.
+# Promoted from hardcoded constants in Slice 2.
 data_quality:
   late_arrival_window_days: 10
   row_count_drop_threshold_pct: 20.0
   row_count_baseline_days: 7
+  # Max % of fact rows allowed to have ANY NULL surrogate key after the
+  # PIT-correct SCD2 join. A spike means an order references a customer
+  # or product that never appeared in the dim source — i.e. an upstream
+  # data quality break we shouldn't paper over.
+  orphan_surrogate_rate_pct: 1.0
 
 # Airflow defaults
 airflow:

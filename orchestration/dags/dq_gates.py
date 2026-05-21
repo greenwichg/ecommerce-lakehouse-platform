@@ -1,16 +1,18 @@
 """Data-quality gates used by the daily batch pipeline.
 
-The headline rule (per spec):
+Two gates today:
 
-    Fail the DAG if today's row count for a fact is more than 20% lower
-    than the 7-day rolling average.
+- ``check_row_count_drop``: today's count vs N-day baseline via Snowflake
+  Time Travel; fails the DAG if drop > threshold.
+- ``check_orphan_surrogate_rate``: % of fact rows with any NULL surrogate
+  key after the SCD2 PIT join; fails the DAG if rate > threshold. A spike
+  indicates the upstream source produced an order referencing a customer
+  or product that never landed in the dim source.
 
-Implemented as a function that runs a SQL query against Snowflake (or any
-common-SQL connection) and raises ``AirflowFailException`` on violation —
-no retries, since "row count too low" is not a transient error.
-
-Hardcoded threshold (20%) for Slice 1; promoted to config in Slice 2 per
-the slice plan.
+Both gates read their thresholds from ``config/base.yaml`` via
+``libs.config.load_config`` (Slice 2 promotion from Slice 1's hardcoded
+constants). The function defaults are kept for ease of unit-testing without
+loading the config layer.
 """
 
 from __future__ import annotations
@@ -23,19 +25,48 @@ from airflow.providers.common.sql.hooks.sql import DbApiHook
 
 log = logging.getLogger(__name__)
 
-# Hardcoded for Slice 1; moves to config in Slice 2.
-_DROP_THRESHOLD_PCT = 20.0
-_BASELINE_DAYS = 7
+
+def _load_dq_thresholds() -> dict[str, float | int]:
+    """Read DQ thresholds from layered config.
+
+    Imported lazily inside the function so the module loads cleanly even
+    when the libs/ path isn't on sys.path yet (e.g. during the DAG's first
+    import in unit tests). Falls back to Slice 1 defaults if config can't
+    be loaded — that way a misconfigured environment never silently
+    disables the gates.
+    """
+    try:
+        from libs.config import get_path, load_config
+
+        cfg = load_config(include_local=False)
+        return {
+            "row_count_drop_pct": float(
+                get_path(cfg, "data_quality.row_count_drop_threshold_pct", default=20.0)
+            ),
+            "row_count_baseline_days": int(
+                get_path(cfg, "data_quality.row_count_baseline_days", default=7)
+            ),
+            "orphan_surrogate_pct": float(
+                get_path(cfg, "data_quality.orphan_surrogate_rate_pct", default=1.0)
+            ),
+        }
+    except Exception:  # noqa: BLE001 — never let config issues silently widen the gate
+        log.exception("DQ threshold config load failed; using Slice 1 defaults")
+        return {
+            "row_count_drop_pct": 20.0,
+            "row_count_baseline_days": 7,
+            "orphan_surrogate_pct": 1.0,
+        }
 
 
 def _row_count_query(table_fqn: str, baseline_days: int) -> str:
-    """SQL: returns (today_count, baseline_avg_count) as two columns.
+    """SQL: returns (today_count, baseline_count) as two columns.
 
     Uses Snowflake Time Travel to look back ``baseline_days`` days. The
     AT (OFFSET ...) syntax queries the table state at that point in
-    history; we then aggregate the count.
+    history.
 
-    In Snowflake free tier / Time Travel retention limits, OFFSET beyond
+    On Snowflake free tier / Time Travel retention limits, OFFSET beyond
     7 days requires Enterprise. The 7-day default is intentional.
     """
     seconds = baseline_days * 86400
@@ -49,16 +80,22 @@ def _row_count_query(table_fqn: str, baseline_days: int) -> str:
 def check_row_count_drop(
     table_fqn: str,
     conn_id: str = "snowflake_default",
-    threshold_pct: float = _DROP_THRESHOLD_PCT,
-    baseline_days: int = _BASELINE_DAYS,
+    threshold_pct: float | None = None,
+    baseline_days: int | None = None,
 ) -> dict[str, Any]:
-    """Run the row-count drop check.
+    """Fail the DAG if today's row count dropped > threshold vs baseline.
 
-    Returns counts as a dict (also goes to XCom) on success; raises
-    ``AirflowFailException`` if today's count is below the threshold.
-    Treats baseline_count == 0 (no historical data yet) as a pass.
+    Thresholds come from ``config/base.yaml`` unless overridden explicitly
+    (the kwarg defaults are ``None`` so tests can inject without loading
+    config).
     """
     from airflow.hooks.base import BaseHook
+
+    thresholds = _load_dq_thresholds()
+    if threshold_pct is None:
+        threshold_pct = thresholds["row_count_drop_pct"]
+    if baseline_days is None:
+        baseline_days = int(thresholds["row_count_baseline_days"])
 
     hook: DbApiHook = BaseHook.get_hook(conn_id)
     sql = _row_count_query(table_fqn, baseline_days)
@@ -83,5 +120,67 @@ def check_row_count_drop(
         raise AirflowFailException(
             f"Row-count drop {drop_pct:.1f}% exceeds threshold {threshold_pct}% "
             f"for {table_fqn} (today={today}, baseline={baseline})"
+        )
+    return payload
+
+
+def _orphan_rate_query(table_fqn: str, sk_cols: list[str]) -> str:
+    """SQL: returns (total_rows, orphan_rows) for a fact table.
+
+    A row is an orphan if ANY of the named surrogate-key columns is NULL.
+    """
+    null_predicate = " OR ".join(f"{c} IS NULL" for c in sk_cols)
+    return f"""
+        SELECT
+            COUNT(*) AS total_rows,
+            SUM(CASE WHEN {null_predicate} THEN 1 ELSE 0 END) AS orphan_rows
+        FROM {table_fqn}
+    """
+
+
+def check_orphan_surrogate_rate(
+    table_fqn: str,
+    sk_cols: list[str],
+    conn_id: str = "snowflake_default",
+    threshold_pct: float | None = None,
+) -> dict[str, Any]:
+    """Fail the DAG if the share of fact rows with NULL surrogates exceeds the threshold.
+
+    A non-zero orphan rate means the SCD2 PIT join in gold didn't find a
+    matching dim version. Causes worth investigating:
+      - dim load lagging behind fact load (race condition)
+      - upstream emitted a customer_id / product_id that was never sent
+        to the dim source generator (referential integrity break)
+      - the dim source skipped a customer that the fact references
+    """
+    from airflow.hooks.base import BaseHook
+
+    if threshold_pct is None:
+        threshold_pct = _load_dq_thresholds()["orphan_surrogate_pct"]
+
+    hook: DbApiHook = BaseHook.get_hook(conn_id)
+    sql = _orphan_rate_query(table_fqn, sk_cols)
+    log.info("Orphan-surrogate check on %s: %s", table_fqn, sql)
+    row = hook.get_first(sql)
+    total, orphan = int(row[0] or 0), int(row[1] or 0)
+
+    if total == 0:
+        log.info("Table is empty; skipping orphan check")
+        return {"table": table_fqn, "total": 0, "orphan": 0, "orphan_pct": 0.0}
+
+    orphan_pct = orphan / total * 100.0
+    payload = {
+        "table": table_fqn,
+        "total": total,
+        "orphan": orphan,
+        "orphan_pct": round(orphan_pct, 4),
+        "sk_cols": sk_cols,
+    }
+    log.info("Orphan check result: %s", payload)
+
+    if orphan_pct > threshold_pct:
+        raise AirflowFailException(
+            f"Orphan surrogate rate {orphan_pct:.2f}% exceeds threshold {threshold_pct}% "
+            f"for {table_fqn} ({orphan}/{total} rows have NULL {sk_cols})"
         )
     return payload
