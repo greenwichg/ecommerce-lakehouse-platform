@@ -51,23 +51,42 @@ def test_no_import_errors() -> None:
 #   snowflake_load.{dim_customer,dim_product,orders}
 #   dq_row_count_fact_orders, dq_orphan_fact_orders
 EXPECTED_TASKS = {
+    # Sensors
     "wait_for_raw.wait_orders",
     "wait_for_raw.wait_customers",
     "wait_for_raw.wait_products",
+    "wait_for_raw.wait_currency_rates",  # Slice 4
+    "wait_for_raw.wait_wishlist",  # Slice 4
+    # Coordination
     "emit_batch_id",
     "bronze",
+    # Silver
     "silver.silver_orders",
     "silver.silver_customers",
     "silver.silver_products",
+    "silver.silver_currency_rates",  # Slice 4
+    "silver.silver_wishlist",  # Slice 4
+    # Gold dims
     "gold_dims.dim_customer",
     "gold_dims.dim_product",
+    # Gold facts + marts (Slice 4 grew this group: currency_rates ref
+    # table, wishlist factless fact, customer_ltv mart)
     "gold_facts.fact_orders",
     "gold_facts.fact_order_lifecycle",
+    "gold_facts.currency_rates",
+    "gold_facts.fact_customer_wishlist_product",
+    "gold_facts.customer_ltv",
+    # Snowflake load
     "snowflake_load.dim_customer",
     "snowflake_load.dim_product",
     "snowflake_load.orders",
+    "snowflake_load.currency_rates",  # Slice 4
+    "snowflake_load.wishlist",  # Slice 4
+    "snowflake_load.customer_ltv",  # Slice 4
+    # DQ gates
     "dq_row_count_fact_orders",
     "dq_orphan_fact_orders",
+    "dq_currency_freshness",  # Slice 4
 }
 
 
@@ -204,7 +223,49 @@ def test_sensors_are_deferrable(task_id: str) -> None:
 def test_sources_constant_matches_spec() -> None:
     from daily_batch_pipeline import SOURCES
 
-    assert SOURCES == ["orders", "customers", "products"]
+    assert SOURCES == ["orders", "customers", "products", "currency_rates", "wishlist"]
+
+
+def test_customer_ltv_depends_on_fact_orders() -> None:
+    """customer_ltv reads fact_orders; if this regresses the mart would
+    read stale data from yesterday's fact_orders Delta."""
+    from daily_batch_pipeline import dag
+
+    ltv = dag.get_task("gold_facts.customer_ltv")
+    upstream_ids = {t.task_id for t in ltv.upstream_list}
+    assert "gold_facts.fact_orders" in upstream_ids
+
+
+def test_wishlist_fact_depends_on_dims() -> None:
+    """Same PIT-binding correctness story as fact_orders: dims first."""
+    from daily_batch_pipeline import dag
+
+    wishlist = dag.get_task("gold_facts.fact_customer_wishlist_product")
+    upstream_ids = {t.task_id for t in wishlist.upstream_list}
+    assert "gold_dims.dim_customer" in upstream_ids
+    assert "gold_dims.dim_product" in upstream_ids
+
+
+def test_currency_freshness_gate_runs_after_currency_load() -> None:
+    """The freshness gate queries Snowflake, so it has to wait for the
+    Snowflake load. (And we don't gate it on fact_orders — currency is
+    independent of orders' load path.)"""
+    from daily_batch_pipeline import dag
+
+    gate = dag.get_task("dq_currency_freshness")
+    upstream_ids = {t.task_id for t in gate.upstream_list}
+    assert "snowflake_load.currency_rates" in upstream_ids
+
+
+def test_snowflake_customer_ltv_load_after_orders_load() -> None:
+    """The mart's Snowflake load needs analytics.fact_orders populated
+    first (the LTV table joins to dim_customer but is built from
+    fact_orders upstream, so FK ordering follows fact_orders)."""
+    from daily_batch_pipeline import dag
+
+    load_ltv = dag.get_task("snowflake_load.customer_ltv")
+    upstream_ids = {t.task_id for t in load_ltv.upstream_list}
+    assert "snowflake_load.orders" in upstream_ids
 
 
 # ---------------------------------------------------------------------------

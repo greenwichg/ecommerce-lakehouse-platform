@@ -184,3 +184,69 @@ def check_orphan_surrogate_rate(
             f"for {table_fqn} ({orphan}/{total} rows have NULL {sk_cols})"
         )
     return payload
+
+
+def _currency_freshness_query(table_fqn: str) -> str:
+    """SQL: returns today's rate count and the simulated-share % for ``table_fqn``."""
+    return f"""
+        SELECT
+            COUNT(*) AS total_rates,
+            SUM(CASE WHEN _source = 'simulated' THEN 1 ELSE 0 END) AS simulated_count
+        FROM {table_fqn}
+        WHERE rate_date = CURRENT_DATE
+    """
+
+
+def check_currency_freshness(
+    table_fqn: str = "analytics.currency_rates",
+    conn_id: str = "snowflake_default",
+    simulated_warn_pct: float = 50.0,
+) -> dict[str, Any]:
+    """Slice 4 observability gate: currency rates freshness + provenance.
+
+    Two failure conditions, both raise ``AirflowFailException``:
+
+    1. **Hard fail**: no rates loaded for today's date. Revenue conversion
+       on today's orders would yield NULL — almost always upstream issue
+       (generator didn't run, S3 to Snowflake load broken).
+    2. **Hard fail**: simulated share > ``simulated_warn_pct`` (default 50%).
+       Means the exchangerate.host API has been down for the bulk of
+       today's fetches; revenue numbers should be regarded as estimates,
+       and ops should investigate before the dashboard quotes them as
+       authoritative.
+
+    Returns a payload dict with ``total_rates``, ``simulated_count``,
+    ``simulated_pct`` for XCom inspection on success.
+    """
+    from airflow.hooks.base import BaseHook
+
+    hook: DbApiHook = BaseHook.get_hook(conn_id)
+    sql = _currency_freshness_query(table_fqn)
+    log.info("Currency freshness check on %s: %s", table_fqn, sql)
+    row = hook.get_first(sql)
+    total = int(row[0] or 0)
+    simulated = int(row[1] or 0)
+
+    if total == 0:
+        raise AirflowFailException(
+            f"No currency rates loaded for today in {table_fqn} — "
+            "revenue conversion will yield NULL. Check the generator + Snowflake load."
+        )
+
+    simulated_pct = 100.0 * simulated / total
+    payload = {
+        "table": table_fqn,
+        "total_rates": total,
+        "simulated_count": simulated,
+        "simulated_pct": round(simulated_pct, 2),
+    }
+    log.info("Currency freshness result: %s", payload)
+
+    if simulated_pct > simulated_warn_pct:
+        raise AirflowFailException(
+            f"Currency simulated share {simulated_pct:.1f}% exceeds threshold "
+            f"{simulated_warn_pct}% in {table_fqn} ({simulated}/{total}). "
+            "API has been unavailable for too much of today's window — "
+            "investigate before treating revenue numbers as authoritative."
+        )
+    return payload

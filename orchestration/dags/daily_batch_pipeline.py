@@ -60,7 +60,11 @@ from libs.batch import make_batch_id  # noqa: E402
 
 sys.path.insert(0, str(_DAG_FILE.parent))
 from callbacks import sns_failure_callback  # noqa: E402
-from dq_gates import check_orphan_surrogate_rate, check_row_count_drop  # noqa: E402
+from dq_gates import (  # noqa: E402
+    check_currency_freshness,
+    check_orphan_surrogate_rate,
+    check_row_count_drop,
+)
 
 # -----------------------------------------------------------------------------
 # Configuration
@@ -70,15 +74,17 @@ DAG_ID = "daily_batch_pipeline"
 SCHEDULE = "0 2 * * *"
 SLA_HOURS = 4
 
-# Sources processed by bronze (dynamic task mapping). Slice 3 adds clickstream.
-SOURCES: list[str] = ["orders", "customers", "products"]
+# Sources processed by bronze (dynamic task mapping). Slice 4 adds
+# currency_rates + wishlist alongside the original three.
+SOURCES: list[str] = ["orders", "customers", "products", "currency_rates", "wishlist"]
 
-# Source file shapes — used by the per-source S3 sensors. Parquet for orders
-# and customers, CSV for products.
+# Source file shapes — used by the per-source S3 sensors.
 _SOURCE_FILE = {
     "orders": "orders.parquet",
     "customers": "customers.parquet",
     "products": "products.csv",
+    "currency_rates": "rates.csv",
+    "wishlist": "wishlist.json",
 }
 
 S3_BUCKET = Variable.get("lakehouse_s3_bucket", default_var="ecommerce-lakehouse-prod")
@@ -99,6 +105,14 @@ DATABRICKS_JOBS.update(
         "gold_fact_order_lifecycle": int(
             Variable.get("databricks_job_gold_fact_order_lifecycle", default_var=0)
         ),
+        # Slice 4
+        "gold_currency_rates": int(
+            Variable.get("databricks_job_gold_currency_rates", default_var=0)
+        ),
+        "gold_fact_customer_wishlist_product": int(
+            Variable.get("databricks_job_gold_fact_customer_wishlist_product", default_var=0)
+        ),
+        "gold_customer_ltv": int(Variable.get("databricks_job_gold_customer_ltv", default_var=0)),
     }
 )
 
@@ -113,6 +127,10 @@ _SQL_DIR = _DAG_FILE.parent.parent.parent / "snowflake" / "dml"
 _LOAD_ORDERS_SQL = (_SQL_DIR / "orders_load.sql").read_text()
 _LOAD_DIM_CUSTOMER_SQL = (_SQL_DIR / "dim_customer_load.sql").read_text()
 _LOAD_DIM_PRODUCT_SQL = (_SQL_DIR / "dim_product_load.sql").read_text()
+# Slice 4
+_LOAD_CURRENCY_RATES_SQL = (_SQL_DIR / "currency_rates_load.sql").read_text()
+_LOAD_WISHLIST_SQL = (_SQL_DIR / "wishlist_load.sql").read_text()
+_LOAD_CUSTOMER_LTV_SQL = (_SQL_DIR / "customer_ltv_load.sql").read_text()
 
 # -----------------------------------------------------------------------------
 # DAG defaults
@@ -153,6 +171,12 @@ def gate_orphan_rate(table_fqn: str, sk_cols: list[str]) -> dict[str, Any]:
     return check_orphan_surrogate_rate(
         table_fqn=table_fqn, sk_cols=sk_cols, conn_id=SNOWFLAKE_CONN_ID
     )
+
+
+@task
+def gate_currency_freshness(table_fqn: str) -> dict[str, Any]:
+    """Slice 4: ensure today's currency rates loaded + simulated share < 50%."""
+    return check_currency_freshness(table_fqn=table_fqn, conn_id=SNOWFLAKE_CONN_ID)
 
 
 # -----------------------------------------------------------------------------
@@ -241,6 +265,21 @@ with DAG(
             deferrable=True,
             notebook_params=_NOTEBOOK_PARAMS_TEMPLATE,
         )
+        # Slice 4 additions
+        silver_currency_rates = DatabricksRunNowOperator(
+            task_id="silver_currency_rates",
+            job_id=DATABRICKS_JOBS["silver_currency_rates"],
+            databricks_conn_id=DATABRICKS_CONN_ID,
+            deferrable=True,
+            notebook_params=_NOTEBOOK_PARAMS_TEMPLATE,
+        )
+        silver_wishlist = DatabricksRunNowOperator(
+            task_id="silver_wishlist",
+            job_id=DATABRICKS_JOBS["silver_wishlist"],
+            databricks_conn_id=DATABRICKS_CONN_ID,
+            deferrable=True,
+            notebook_params=_NOTEBOOK_PARAMS_TEMPLATE,
+        )
 
     # 5) Gold dims must materialise BEFORE fact_orders so the PIT join
     #    has the right SCD2 versions to bind to.
@@ -277,6 +316,30 @@ with DAG(
             deferrable=True,
             notebook_params=_NOTEBOOK_PARAMS_TEMPLATE,
         )
+        # Slice 4 additions: currency_rates reference table, wishlist
+        # factless fact (also gated on both dims like fact_orders), and
+        # customer_ltv mart (depends on fact_orders)
+        gold_currency_rates = DatabricksRunNowOperator(
+            task_id="currency_rates",
+            job_id=DATABRICKS_JOBS["gold_currency_rates"],
+            databricks_conn_id=DATABRICKS_CONN_ID,
+            deferrable=True,
+            notebook_params=_NOTEBOOK_PARAMS_TEMPLATE,
+        )
+        gold_fact_wishlist = DatabricksRunNowOperator(
+            task_id="fact_customer_wishlist_product",
+            job_id=DATABRICKS_JOBS["gold_fact_customer_wishlist_product"],
+            databricks_conn_id=DATABRICKS_CONN_ID,
+            deferrable=True,
+            notebook_params=_NOTEBOOK_PARAMS_TEMPLATE,
+        )
+        gold_customer_ltv = DatabricksRunNowOperator(
+            task_id="customer_ltv",
+            job_id=DATABRICKS_JOBS["gold_customer_ltv"],
+            databricks_conn_id=DATABRICKS_CONN_ID,
+            deferrable=True,
+            notebook_params=_NOTEBOOK_PARAMS_TEMPLATE,
+        )
 
     # 7) Snowflake load. Dims first, then facts (so fact MERGEs see the
     #    dim rows that Snowflake's FK constraints reference).
@@ -307,11 +370,34 @@ with DAG(
             autocommit=True,
             params=_SQL_PARAMS,
         )
+        load_currency_rates = SQLExecuteQueryOperator(
+            task_id="currency_rates",
+            conn_id=SNOWFLAKE_CONN_ID,
+            sql=_LOAD_CURRENCY_RATES_SQL,
+            autocommit=True,
+            params=_SQL_PARAMS,
+        )
+        load_wishlist = SQLExecuteQueryOperator(
+            task_id="wishlist",
+            conn_id=SNOWFLAKE_CONN_ID,
+            sql=_LOAD_WISHLIST_SQL,
+            autocommit=True,
+            params=_SQL_PARAMS,
+        )
+        load_customer_ltv = SQLExecuteQueryOperator(
+            task_id="customer_ltv",
+            conn_id=SNOWFLAKE_CONN_ID,
+            sql=_LOAD_CUSTOMER_LTV_SQL,
+            autocommit=True,
+            params=_SQL_PARAMS,
+        )
         # Facts depend on dims (Snowflake FK enforcement is advisory but
         # we order anyway so dq_gate_orphan sees coherent state).
         [load_dim_customer, load_dim_product] >> load_orders
+        [load_dim_customer, load_dim_product] >> load_wishlist
+        load_orders >> load_customer_ltv
 
-    # 8) DQ gates: row count + orphan surrogate rate, in parallel.
+    # 8) DQ gates: row count + orphan surrogate rate + Slice-4 currency freshness.
     dq_row_count = gate_row_count.override(task_id="dq_row_count_fact_orders")(
         table_fqn=f"{SNOWFLAKE_DATABASE}.analytics.fact_orders",
     )
@@ -319,16 +405,32 @@ with DAG(
         table_fqn=f"{SNOWFLAKE_DATABASE}.analytics.fact_orders",
         sk_cols=["customer_sk", "product_sk"],
     )
+    # Slice 4: rates loaded for today + simulated share < threshold. Runs
+    # right after currency_rates loads (don't block other facts on this).
+    dq_currency = gate_currency_freshness.override(task_id="dq_currency_freshness")(
+        table_fqn=f"{SNOWFLAKE_DATABASE}.analytics.currency_rates",
+    )
 
     # Wiring -----------------------------------------------------------------
     wait_for_raw >> batch_id >> bronze_mapped >> silver_group
     silver_orders >> [gold_fact_orders, gold_fact_order_lifecycle]
     silver_customers >> gold_dim_customer
     silver_products >> gold_dim_product
+    silver_currency_rates >> gold_currency_rates
+    silver_wishlist >> gold_fact_wishlist
     # PIT-correct surrogate binding requires dims to be current before
-    # fact_orders runs:
+    # facts that bind to them run:
     [gold_dim_customer, gold_dim_product] >> gold_fact_orders
+    [gold_dim_customer, gold_dim_product] >> gold_fact_wishlist
+    # customer_ltv reads fact_orders → must run after gold_fact_orders.
+    gold_fact_orders >> gold_customer_ltv
+
     gold_dim_customer >> load_dim_customer
     gold_dim_product >> load_dim_product
     [gold_fact_orders, gold_fact_order_lifecycle] >> load_orders
+    gold_currency_rates >> load_currency_rates
+    gold_fact_wishlist >> load_wishlist
+    gold_customer_ltv >> load_customer_ltv
+
     load_orders >> [dq_row_count, dq_orphan]
+    load_currency_rates >> dq_currency
