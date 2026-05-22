@@ -76,15 +76,22 @@ jobs:
           export AIRFLOW__CORE__LOAD_EXAMPLES=False
           export AIRFLOW__CORE__DAGS_FOLDER="$(pwd)/orchestration/dags"
           airflow db migrate
-          # list-import-errors exits 0 even on errors, so we filter the
-          # output for any failure markers and grep -v their absence.
-          errors=$(airflow dags list-import-errors --output json)
-          echo "$errors"
-          # Empty array means no errors — accept either "[]" or empty.
-          if [[ "$errors" != "[]" && -n "$errors" && "$errors" != "null" ]]; then
-            echo "DAG import errors found"
-            exit 1
-          fi
+          # We use DagBag directly rather than `airflow dags list-import-errors`
+          # because that CLI command interleaves plugin-setup INFO logs on
+          # stdout with the JSON payload, which breaks any shell-side parsing.
+          python - <<'PY'
+          import sys
+          from airflow.models.dagbag import DagBag
+
+          dagbag = DagBag(include_examples=False)
+          if dagbag.import_errors:
+              print("DAG import errors found:")
+              for filepath, error in dagbag.import_errors.items():
+                  print(f"\n--- {filepath} ---")
+                  print(error)
+              sys.exit(1)
+          print(f"OK: {len(dagbag.dags)} DAG(s) imported with no errors")
+          PY
 
   terraform:
     name: Terraform fmt + validate
