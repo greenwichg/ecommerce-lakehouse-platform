@@ -681,7 +681,7 @@ eb7d26d chore(infra): Terraform skeleton — top-level files + per-env tfvars
 **Slice 6 — Streamlit + CI/CD + Docs** (Streamlit dashboard with four
 widgets + sidebar, two new GitHub Actions workflows, a new
 ``docs/data_model.md``, the end-to-end demo failure-scenario script
-+ regression tests, README finalisation, +33 tests over Slice 5)
++ regression tests, README finalisation, +25 tests over Slice 5)
 
 | Area | Files | New tests |
 |------|-------|-----------|
@@ -693,7 +693,7 @@ widgets + sidebar, two new GitHub Actions workflows, a new
 | `docs/data_model.md` (new) | 1 | — |
 | `docs/architecture.md` + `runbook.md` + `README.md` finalisation | 3 | — |
 
-**Final test count: 321 passing** (was 288 at end of Slice 5).
+**Final test count: 313 passing** (was 288 at end of Slice 5 — added 23 dashboard tests + 2 demo-scenario tests).
 Streamlit launches in mock mode and renders all four widgets +
 sidebar; the AppTest harness asserts this in CI without booting a
 browser.
@@ -754,7 +754,7 @@ sqlfluff lint snowflake/              → All Finished! (0 violations)
 
 ## Project complete — final summary
 
-**7 slices, ~140 files, 321 passing tests, 6 documentation files.**
+**7 slices, ~140 files, 313 passing tests, 5 top-level docs + per-module READMEs.**
 
 | Slice | Headline | Tests added |
 |---|---|---|

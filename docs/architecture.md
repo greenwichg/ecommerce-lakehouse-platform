@@ -478,3 +478,65 @@ The DAG's failure callback uses the same SNS topic but with an
 advisory subject prefix — maintenance failures don't take the platform
 down, so they shouldn't page on-call at the same severity as a daily
 DAG failure.
+
+## Slice 6 additions (Streamlit + CI/CD + docs)
+
+### Dashboard mode: mock by default
+
+The Streamlit app's default mode is `mock` — it reads pre-generated
+parquet/JSON from `data/mock/` so the dashboard renders in any
+environment without credentials. The "live" mode is opted into via
+`LAKEHOUSE_DASHBOARD_MODE=live`. If `live` is requested but the
+required env vars (`SNOWFLAKE_*` / `AWS_*` / `AIRFLOW_*`) aren't set,
+the app shows a warning banner and falls back to mock rather than
+crashing. The fallback is deliberate: a half-configured dashboard is
+worse than no dashboard, but the dashboard rendering with placeholder
+data is better than a 500 page.
+
+### Data layer separated from rendering
+
+`streamlit_app/data.py` exposes one function per widget that takes a
+`mode` argument and returns a DataFrame (or `list[dict]` for the
+JSON-shaped queue). `streamlit_app/widgets.py` contains the renderers
+that take those DataFrames and emit Streamlit components. Why
+separate: the data layer is unit-testable against fixtures without
+booting the Streamlit runtime, and the live adapters' lazy imports
+keep mock mode from requiring snowflake-connector-python or boto3.
+
+### Why an end-to-end demo as code, not docs
+
+The `demo/inject_bad_file.py` script exists because failure scenarios
+documented in markdown rot — the validator's outcome shape changes,
+the helper's signatures change, the script breaks. Making it a real
+script with regression tests means a future refactor that breaks the
+quarantine flow fails CI immediately rather than at the next ops
+drill.
+
+The mock-vs-live split mirrors the dashboard: default is in-process
+moto so anyone can run it; opt into real AWS for live demos. Both
+paths exercise the same Python code, just with different boto3
+clients underneath.
+
+### CI/CD pattern: plan in CI, apply by hand
+
+`deploy.yml` runs `terraform plan` and uploads the artifact for human
+review. It deliberately stops there. Auto-applying Terraform from CI
+to a multi-tenant cloud account is the kind of automation that's
+great until the day it isn't — when the diff was bigger than expected
+and a human would have noticed. The pattern: CI proves the plan is
+clean; a named human runs `terraform apply` against the saved plan.
+
+Databricks and Snowflake deploys *do* apply from CI, because their
+blast radius is bounded (workspace-scoped, schema-scoped) and their
+deploy tools (Asset Bundles, schemachange) have native diff +
+versioning baked in.
+
+### Why lint.yml stays separate from test.yml
+
+Two workflows on the same triggers because they have very different
+latencies. Lint finishes in ~30 seconds. The full test suite — Spark
+JVM startup, Airflow metadata DB init, Streamlit AppTest — takes
+4-5 minutes. Splitting them means style violations fail the PR check
+fast without waiting on Spark. Adding lint to test.yml as a
+prerequisite step would block the more useful pytest signal on a
+trailing-whitespace ruff finding.
