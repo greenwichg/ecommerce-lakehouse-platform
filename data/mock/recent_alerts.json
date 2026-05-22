@@ -1,0 +1,22 @@
+[
+  {
+    "ts": "2025-05-21T14:18:00+00:00",
+    "subject": "[Lakehouse] Quarantine queue depth = 3",
+    "severity": "warn"
+  },
+  {
+    "ts": "2025-05-21T12:30:00+00:00",
+    "subject": "[Lakehouse] currency_freshness: 60% simulated rates last hour",
+    "severity": "warn"
+  },
+  {
+    "ts": "2025-05-21T09:30:00+00:00",
+    "subject": "[Lakehouse] daily_batch_pipeline succeeded",
+    "severity": "info"
+  },
+  {
+    "ts": "2025-05-20T15:30:00+00:00",
+    "subject": "[Lakehouse] file_validator: 1 file quarantined (orders, missing_columns)",
+    "severity": "warn"
+  }
+]

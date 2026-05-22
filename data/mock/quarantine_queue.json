@@ -1,0 +1,29 @@
+[
+  {
+    "execution_name": "exec-2025-05-21-orders-missing-cust",
+    "started_at": "2025-05-21T11:30:00+00:00",
+    "age_hours": 3,
+    "quarantine_key": "quarantine/orders/year=2025/month=05/day=21/orders.parquet",
+    "source": "orders",
+    "reason": "missing_columns: customer_id",
+    "task_token": "AAAAKgAAAAIAAAAAAAAAAS9...redacted...mock_token_1"
+  },
+  {
+    "execution_name": "exec-2025-05-21-products-bad-csv",
+    "started_at": "2025-05-21T06:30:00+00:00",
+    "age_hours": 8,
+    "quarantine_key": "quarantine/products/year=2025/month=05/day=21/products.csv",
+    "source": "products",
+    "reason": "unreadable_csv: malformed header",
+    "task_token": "AAAAKgAAAAIAAAAAAAAAAS9...redacted...mock_token_2"
+  },
+  {
+    "execution_name": "exec-2025-05-20-currency-zero-rows",
+    "started_at": "2025-05-20T12:30:00+00:00",
+    "age_hours": 26,
+    "quarantine_key": "quarantine/currency_rates/year=2025/month=05/day=20/rates.csv",
+    "source": "currency_rates",
+    "reason": "zero_rows",
+    "task_token": "AAAAKgAAAAIAAAAAAAAAAS9...redacted...mock_token_3"
+  }
+]
