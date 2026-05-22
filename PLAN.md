@@ -747,7 +747,11 @@ sqlfluff lint snowflake/              → All Finished! (0 violations)
 ### Commit log (Slice 6)
 
 ```
-<filled in at end of slice — see git log>
+cfebfd9 docs(architecture+runbook): Slice 6 sections + correct test count
+521d055 docs: data_model.md + README finalisation + PLAN project-complete summary
+6f31144 feat(demo): end-to-end quarantine-replay drill (script + doc + tests)
+989e7a2 ci(workflows): test.yml + deploy.yml
+916ea9a feat(dashboard): Streamlit operations dashboard with 4 widgets + sidebar
 ```
 
 ---
