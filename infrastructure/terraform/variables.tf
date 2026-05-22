@@ -15,11 +15,6 @@ variable "region" {
   default     = "us-east-1"
 }
 
-variable "account_id" {
-  description = "AWS account ID. Used in cross-service ARNs (Secrets Manager, etc.)."
-  type        = string
-}
-
 variable "lakehouse_bucket_name" {
   description = "Base S3 bucket name. The S3 module derives raw/processed/archive/quarantine prefixes inside this one bucket. Multi-bucket would also work; the prefix-per-zone layout is simpler for our scale."
   type        = string

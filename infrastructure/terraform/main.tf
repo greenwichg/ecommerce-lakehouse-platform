@@ -64,7 +64,6 @@ module "iam" {
   secrets_arns         = module.secrets.secret_arns
   alerts_topic_arn     = module.sns.alerts_topic_arn
   lambda_log_group_arn = module.cloudwatch.lambda_log_group_arn
-  sfn_log_group_arn    = module.cloudwatch.sfn_log_group_arn
   tags                 = local.common_tags
 }
 

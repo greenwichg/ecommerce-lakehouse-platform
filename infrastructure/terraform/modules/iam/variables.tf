@@ -28,11 +28,6 @@ variable "lambda_log_group_arn" {
   type        = string
 }
 
-variable "sfn_log_group_arn" {
-  description = "CloudWatch log group ARN for the Step Functions state machine."
-  type        = string
-}
-
 variable "tags" {
   description = "Tags to apply to all resources."
   type        = map(string)
