@@ -1,0 +1,130 @@
+name: Deploy
+
+# Manual-only deploys. The pattern here is "plan in CI, apply by hand"
+# for Terraform and "deploy artifact, run schemachange" for Databricks
+# and Snowflake. The credentials referenced below are repository
+# secrets — see docs/runbook.md ("Slice 6 specifics → deploy.yml
+# secrets") for the list and how to populate each.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options: [dev, prod]
+        default: dev
+      components:
+        description: "Components to deploy (comma-separated: terraform,databricks,snowflake)"
+        required: true
+        default: "terraform,databricks,snowflake"
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  terraform-plan:
+    name: Terraform plan (${{ inputs.environment }})
+    if: contains(inputs.components, 'terraform')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # OIDC into AWS, see AWS_ROLE_TO_ASSUME below
+      contents: read
+    defaults:
+      run:
+        working-directory: infrastructure/terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7"
+
+      - name: Terraform init
+        run: terraform init -input=false
+
+      - name: Terraform plan
+        run: |
+          terraform plan \
+            -var-file=environments/${{ inputs.environment }}.tfvars \
+            -out=tfplan-${{ inputs.environment }} \
+            -no-color | tee plan.txt
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ inputs.environment }}
+          path: |
+            infrastructure/terraform/tfplan-${{ inputs.environment }}
+            infrastructure/terraform/plan.txt
+          retention-days: 14
+
+      # Deliberate stop: a human reviews the plan and runs terraform
+      # apply manually with the saved artifact. The "plan in CI, apply
+      # by hand" pattern keeps blast-radius operations out of CI.
+
+  databricks-deploy:
+    name: Databricks bundle deploy (${{ inputs.environment }})
+    if: contains(inputs.components, 'databricks')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Databricks CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+
+      - name: Deploy Databricks bundle
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        run: |
+          # The bundle config lives in databricks/bundle.yml and selects
+          # the target environment by --target. See databricks/README.md
+          # for the bundle layout.
+          databricks bundle validate --target ${{ inputs.environment }}
+          databricks bundle deploy --target ${{ inputs.environment }}
+
+  snowflake-deploy:
+    name: Snowflake DDL via schemachange (${{ inputs.environment }})
+    if: contains(inputs.components, 'snowflake')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install schemachange
+        run: pip install schemachange
+
+      - name: Apply Snowflake DDL
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+          SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+          SNOWFLAKE_WAREHOUSE: ${{ vars.SNOWFLAKE_WAREHOUSE }}
+          SNOWFLAKE_DATABASE: ${{ vars.SNOWFLAKE_DATABASE }}
+        run: |
+          # schemachange tracks applied changes in a versioned change-log
+          # table; running it twice is a no-op for already-applied files.
+          # The --dry-run is left off intentionally — staged deploys
+          # depend on this actually applying.
+          schemachange deploy \
+            --root-folder snowflake/ddl \
+            --vars "{\"SNOWFLAKE_DATABASE\": \"$SNOWFLAKE_DATABASE\", \"SNOWFLAKE_WAREHOUSE\": \"$SNOWFLAKE_WAREHOUSE\"}"
