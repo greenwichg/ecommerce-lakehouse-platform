@@ -124,12 +124,14 @@ With all data flowing, fill in the remaining infrastructure:
 ### Slice 6 — Streamlit + CI/CD + Docs
 Close out the user-facing pieces:
 
-- Streamlit dashboard (4 widgets per spec)
+- Streamlit dashboard (4 widgets per spec + sidebar)
 - GitHub Actions test + deploy workflows
 - `docs/architecture.md` with the "why" decisions
 - `docs/runbook.md` with failure modes, backfill, replay, escalation
+- `docs/data_model.md` with the star schema, grains, SCD strategy
 - README architecture mermaid + cost estimates + tech stack version table
 - Demo failure scenario (bad file → quarantine → alert → replay)
+- PLAN.md final project-complete summary
 
 ## 3. Estimated Effort per Slice
 
@@ -669,3 +671,165 @@ f424088 feat(infra): IAM module — five least-privilege roles + walkthrough
 6424184 feat(infra): S3 + SNS + CloudWatch + Secrets modules
 eb7d26d chore(infra): Terraform skeleton — top-level files + per-env tfvars
 ```
+
+---
+
+## Session Recap (Slice 6) — project complete
+
+### Completed
+
+**Slice 6 — Streamlit + CI/CD + Docs** (Streamlit dashboard with four
+widgets + sidebar, two new GitHub Actions workflows, a new
+``docs/data_model.md``, the end-to-end demo failure-scenario script
++ regression tests, README finalisation, +33 tests over Slice 5)
+
+| Area | Files | New tests |
+|------|-------|-----------|
+| `streamlit_app/` (app + data layer + widgets) | 4 | — |
+| `data/mock/` (generator + 6 mock files) | 7 | — |
+| `tests/dashboard/` (data layer + AppTest end-to-end) | 3 | 23 |
+| `.github/workflows/test.yml` + `deploy.yml` | 2 | — (YAML-parsed) |
+| `demo/inject_bad_file.py` + `docs/demo_failure_scenario.md` | 3 | 2 |
+| `docs/data_model.md` (new) | 1 | — |
+| `docs/architecture.md` + `runbook.md` + `README.md` finalisation | 3 | — |
+
+**Final test count: 321 passing** (was 288 at end of Slice 5).
+Streamlit launches in mock mode and renders all four widgets +
+sidebar; the AppTest harness asserts this in CI without booting a
+browser.
+
+### Deviations from the original plan
+
+1. **Test dir renamed `tests/streamlit_app` → `tests/dashboard`** to
+   avoid pytest collecting the test directory as the source package
+   (both had a top-level `streamlit_app`). The rename is purely
+   ergonomic; the data layer + widgets still live at `streamlit_app/`.
+
+2. **Demo script uses `importlib.util` for both handlers** because
+   `lambda/file_validator/handler.py` and
+   `lambda/quarantine_helper/handler.py` collide on the module name
+   `handler` when both are imported into the same Python process. The
+   demo script never puts either lambda dir on `sys.path` — it loads
+   each handler under a uniquely-named module via `importlib.util`
+   and registers it in `sys.modules` before `exec_module` (otherwise
+   `@dataclass` chokes on a missing `cls.__module__`).
+
+3. **Sidebar added beyond the spec's four widgets.** The spec listed
+   four: pipeline runs, freshness, cost, quarantine queue. The sidebar
+   carries the currency-fallback-rate gauge + recent SNS alerts —
+   small enough to live in the rail without crowding the main grid,
+   and useful enough that omitting them would make the dashboard feel
+   skeletal. Approved at the design checkpoint.
+
+4. **Live cost-per-run query is Snowflake-only.** The Databricks
+   billable-usage REST call requires a workspace API key that the
+   demo doesn't have. The mock dataset shows both compute kinds; the
+   live adapter notes the gap in a logger.info call rather than
+   throwing. Same trade-off as Slice 5's stub in
+   `weekly_maintenance.py`.
+
+5. **lint.yml kept separate from test.yml.** Slice 6 spec asked
+   whether to consolidate them; chose not to because lint runs in
+   under 30 seconds vs. ~4 minutes for the Spark-bearing test suite —
+   PR feedback for trivial style issues should not wait on Spark.
+
+### Tests + lint status at session end
+
+```
+pytest                                → 321 passed (was 288 at end of Slice 5)
+streamlit run ... (mock mode)         → HTTP 200, all 4 widgets render
+terraform fmt -check -recursive       → All formatted
+ruff check .                          → All checks passed!
+black --check .                       → All clean
+sqlfluff lint snowflake/              → All Finished! (0 violations)
+```
+
+### Commit log (Slice 6)
+
+```
+<filled in at end of slice — see git log>
+```
+
+---
+
+## Project complete — final summary
+
+**7 slices, ~140 files, 321 passing tests, 6 documentation files.**
+
+| Slice | Headline | Tests added |
+|---|---|---|
+| 0 | Scaffolding (config, CI lint, layout) | — |
+| 1 | Orders end-to-end (the reference slice) | ~80 |
+| 2 | Customers + Products + SCD2 dims + PIT joins | ~60 |
+| 3 | Clickstream + hourly DAG + sessionization + Datasets | ~30 |
+| 4 | Currency + customer_ltv + wishlist factless fact + MV | ~70 |
+| 5 | Terraform + Lambda validator + Step Functions quarantine + cost monitors | +42 |
+| 6 | Streamlit + CI/CD + docs + demo scenario | +33 |
+
+### What this project demonstrates
+
+- **Data engineering depth**: SCD2 PIT joins, gap-and-island
+  sessionization, accumulating-snapshot vs transactional vs factless
+  facts, Snowflake MV restrictions and the denormalisation workaround,
+  `_source` provenance for DQ observability, dedup precedence under
+  late-arriving updates.
+- **Cloud and infra**: modular Terraform (7 modules), IAM
+  least-privilege with documented deviations from strict scoping,
+  Container Image Lambda for pyarrow, S3 → SQS → Lambda + DLQ with
+  redrive + ReportBatchItemFailures, KMS with bucket_key_enabled,
+  Snowflake STORAGE INTEGRATION two-apply bootstrap.
+- **Orchestration**: Airflow deferrable operators, dynamic task
+  mapping, dataset triggering across DAGs, on_failure_callback to
+  SNS, weekly maintenance DAG with OPTIMIZE/VACUUM and
+  split-compute cost report.
+- **Disaster recovery**: Step Functions `waitForTaskToken` for a
+  7-day operator-decision window at zero compute cost; three-branch
+  decision (replay/discard/fix-and-replay) with terminal SNS
+  notifications and audit logging.
+- **Cost discipline**: per-warehouse + account-level Snowflake
+  resource monitors with NOTIFY/SUSPEND thresholds, S3 lifecycle to
+  Glacier after 90 days, KMS bucket_key_enabled to amortise key
+  charges.
+- **Operability**: Streamlit dashboard with four operational widgets
+  + sidebar, end-to-end demo scenario script, three runbooks (general,
+  data model, demo failure), per-module READMEs, conventional commits
+  per logical change.
+- **Testing discipline**: 321 tests across unit, integration (moto),
+  Spark-driven library tests (chispa), Airflow DAG validation,
+  Streamlit AppTest, ASL static validation, and a smoke test for the
+  demo script. The full pytest run is the regression gate.
+
+### What's not done (and what would be next)
+
+Honest list, since the spec asked for one:
+
+1. **Databricks DBU live wiring**. The cost report and dashboard's
+   cost widget both stub the Databricks side. The real call uses the
+   `/api/2.0/usage/v1/billable-usage` REST endpoint with a workspace
+   PAT from Secrets Manager. One-task change; no architectural
+   blocker.
+
+2. **CloudWatch-backed recent_alerts**. The dashboard's sidebar
+   alerts widget reads from a mock file in both modes. The real
+   pattern is a CloudWatch log group that mirrors SNS publishes
+   (configured in `modules/cloudwatch/`); the live adapter is a
+   `start_query` against that log group. The CloudWatch module
+   exists but the SNS-to-CloudWatch mirror subscription is the
+   missing piece.
+
+3. **Streamlit auth / SSO**. The dashboard uses an env var for the
+   operator identifier. A real deployment plugs in Streamlit's
+   `experimental_user` (Snowflake Native App), OAuth, or a reverse
+   proxy with header auth.
+
+4. **`terraform apply` against a real account**. The whole
+   infrastructure is `terraform plan`-clean but no apply has been
+   run. The deploy.yml workflow's `terraform-plan` job is the
+   designated next step.
+
+5. **dbt or schemachange migration history**. Snowflake DDL is
+   versioned by filename order; the deploy.yml uses schemachange to
+   track applied scripts. A real migration tool like dbt or Liquibase
+   would replace this for a production deployment with rollbacks.
+
+None of these block the demo. Each is an honest "next sprint" item.

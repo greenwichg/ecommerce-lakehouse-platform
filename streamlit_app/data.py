@@ -51,7 +51,7 @@ class LiveConfig:
     airflow_password: str | None
 
     @classmethod
-    def from_env(cls) -> "LiveConfig":
+    def from_env(cls) -> LiveConfig:
         return cls(
             snowflake_account=os.environ.get("SNOWFLAKE_ACCOUNT"),
             snowflake_user=os.environ.get("SNOWFLAKE_USER"),

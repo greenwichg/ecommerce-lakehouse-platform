@@ -1,18 +1,12 @@
 # Ecommerce Lakehouse Platform
 
-End-to-end data platform for ecommerce analytics. Synthetic event generation
-flows through S3 → Databricks (medallion architecture) → Snowflake → Streamlit
-dashboard, with Airflow orchestration and Terraform-managed AWS infrastructure.
+Production-grade ecommerce lakehouse: synthetic generators → S3 → Databricks medallion (Bronze/Silver/Gold Delta) → Snowflake star schema → Streamlit dashboard, orchestrated by Airflow, with Terraform-managed AWS infra and a Step Functions human-in-the-loop quarantine workflow.
 
-This is a portfolio-style project demonstrating production-grade lakehouse
-patterns: schema evolution via Auto Loader, MERGE-based deduplication,
-sessionization windows, SCD Type 2 dimensions, transactional + accumulating
-snapshot facts, deferrable orchestration, and CI-gated quality checks.
+A portfolio project demonstrating production patterns end-to-end: schema-evolving Auto Loader, MERGE-based dedup, gap-and-island sessionization, SCD Type 2 dimensions, PIT-correct surrogate joins, transactional + accumulating snapshot + factless facts, deferrable orchestration with dataset triggering, IAM least-privilege, container-image Lambdas, `waitForTaskToken` operator workflows, cost guardrails, and CI-gated tests.
 
-## Status
+## Status — complete
 
-Built in vertical slices — one source flowing end-to-end before adding the
-next. See [`PLAN.md`](PLAN.md) for the slice plan.
+Built in seven vertical slices — one source flowing end-to-end before adding the next. **288 tests + 33 dashboard / demo tests = 321 passing.** Lint / fmt all clean.
 
 | Slice | Scope | Status |
 |-------|-------|--------|
@@ -22,21 +16,35 @@ next. See [`PLAN.md`](PLAN.md) for the slice plan.
 | 3 | **Clickstream** + hourly DAG + sessionization + Snowpipe/Streams/Tasks + Dataset triggering | ✅ done |
 | 4 | **Currency rates** + customer_ltv mart + wishlist factless fact + MV | ✅ done |
 | 5 | **Infra hardening**: Terraform (7 modules), validator Lambda (Container Image), quarantine-replay Step Functions, IAM least-privilege, Snowflake resource monitors, weekly maintenance DAG + cost report | ✅ done |
-| 6 | Streamlit + CI/CD deploy + full docs | ⏳ pending |
+| 6 | **Streamlit dashboard** (4 widgets + sidebar), CI/CD (test.yml + deploy.yml), docs (architecture, runbook, data_model, demo_failure_scenario), end-to-end demo script | ✅ done |
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    G[Generators<br/>Python + Faker] --> S3R[(S3 / local FS<br/>raw/source/year=.../...)]
-    S3R -->|Auto Loader<br/>cloudFiles| B[Bronze<br/>Delta]
-    B -->|MERGE dedup<br/>+ DQ quarantine| S[Silver<br/>Delta]
-    S -->|SCD2 + facts| GO[Gold<br/>Delta]
-    GO -->|COPY INTO / MERGE| SF[(Snowflake<br/>RAW → STAGING → ANALYTICS)]
+    G[Generators<br/>Python + Faker] --> S3R[(S3<br/>raw/source/year=…)]
+    S3R -->|S3 → SQS → Lambda<br/>file_validator| V{Schema<br/>valid?}
+    V -->|yes| B[Bronze Delta<br/>Auto Loader]
+    V -->|no| Q[(quarantine/)]
+    Q -->|SNS alert| SFN[Step Functions<br/>waitForTaskToken]
+    SFN -->|operator: replay| S3R
+    SFN -->|operator: discard| AUD[audit log]
+    SFN -->|operator: fix-and-replay| S3R
+    B -->|MERGE dedup<br/>+ DQ gate| SI[Silver Delta]
+    SI -->|SCD2 + PIT joins| GO[Gold Delta<br/>star schema]
+    GO -->|COPY INTO + MERGE| SF[(Snowflake<br/>RAW → STAGING → ANALYTICS)]
+    SF -->|MV refresh| MV[(Materialized<br/>view)]
     SF --> ST[Streamlit<br/>dashboard]
-    A[Airflow 2.10<br/>deferrable] -. orchestrates .-> G & B & S & GO & SF
-    Q[Quarantine<br/>Delta] -.-> S
+    SF --> CW[CloudWatch<br/>dashboards + alarms]
+    A[Airflow 2.10<br/>deferrable] -. daily / hourly / weekly .-> B & SI & GO & SF
 ```
+
+The four key story arcs in one diagram:
+
+1. **The happy path** (top half): generators → Bronze → Silver → Gold → Snowflake → BI.
+2. **The unhappy path** (left middle): the validator quarantines a bad file before it pollutes Bronze.
+3. **The recovery path** (left top→middle): operator decides via SFN, the file gets replayed.
+4. **The observability path** (right): Streamlit + CloudWatch read the same provenance columns that Bronze/Silver write.
 
 ## Tech stack
 
@@ -135,6 +143,24 @@ the same ground without needing an initialised Airflow metadata DB:
 pytest orchestration/tests -q
 ```
 
+### Streamlit dashboard
+
+```bash
+pip install -e ".[streamlit]"
+streamlit run streamlit_app/app.py
+```
+
+Default is **mock mode** — reads `data/mock/*.parquet` so all four widgets render without any cloud credentials. Set `LAKEHOUSE_DASHBOARD_MODE=live` plus the `SNOWFLAKE_*` / `AWS_*` / `AIRFLOW_*` env vars to query real systems. The dashboard gracefully falls back to mock with a banner if live is requested but credentials are missing.
+
+### Demo failure scenario
+
+```bash
+python demo/inject_bad_file.py             # quarantine flow only
+python demo/inject_bad_file.py --auto-replay  # full quarantine → operator → replay loop
+```
+
+Runs entirely in-process against moto. Walks through the malformed-file → validator → quarantine → Step Functions operator-decision flow → helper-Lambda replay path. See [`docs/demo_failure_scenario.md`](docs/demo_failure_scenario.md) for expected output at each step.
+
 ### Local end-to-end (Slice 1)
 
 See [`docs/runbook.md`](docs/runbook.md) → "Running end-to-end locally".
@@ -203,6 +229,9 @@ scenario walkthrough and the why-not-Airflow cost comparison.
 
 ## Documentation
 
-- [`PLAN.md`](PLAN.md) — vertical slice plan and progress
-- [`docs/architecture.md`](docs/architecture.md) — decisions and tradeoffs
-- [`docs/runbook.md`](docs/runbook.md) — failure modes, backfill, replay
+- [`PLAN.md`](PLAN.md) — vertical slice plan, deviations, and project-complete summary
+- [`docs/architecture.md`](docs/architecture.md) — the "why" decisions, every slice
+- [`docs/data_model.md`](docs/data_model.md) — star schema, grains, SCD strategy, surrogate keys
+- [`docs/runbook.md`](docs/runbook.md) — failure modes, backfill, replay, escalation, quarantine workflow
+- [`docs/demo_failure_scenario.md`](docs/demo_failure_scenario.md) — end-to-end drill: bad file → quarantine → operator → replay
+- `infrastructure/terraform/modules/*/README.md` — per-module deep dives (IAM walkthrough, Step Functions scenario, etc.)

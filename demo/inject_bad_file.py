@@ -76,13 +76,15 @@ def _make_bad_parquet() -> bytes:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    table = pa.table({
-        "order_id": ["bad-1", "bad-2", "bad-3"],
-        "product_id": ["p1", "p2", "p3"],
-        "quantity": [1, 2, 3],
-        "price": [9.99, 19.99, 29.99],
-        # customer_id deliberately omitted
-    })
+    table = pa.table(
+        {
+            "order_id": ["bad-1", "bad-2", "bad-3"],
+            "product_id": ["p1", "p2", "p3"],
+            "quantity": [1, 2, 3],
+            "price": [9.99, 19.99, 29.99],
+            # customer_id deliberately omitted
+        }
+    )
     buf = io.BytesIO()
     pq.write_table(table, buf)
     return buf.getvalue()
@@ -90,7 +92,9 @@ def _make_bad_parquet() -> bytes:
 
 def _bad_key() -> str:
     today = date.today()
-    return f"raw/orders/year={today.year}/month={today.month:02d}/day={today.day:02d}/orders.parquet"
+    return (
+        f"raw/orders/year={today.year}/month={today.month:02d}/day={today.day:02d}/orders.parquet"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +119,7 @@ def run_mock(*, auto_replay: bool) -> int:
 
     # Reset env so the validator handler reads our test values
     import os as _os
+
     _os.environ["LAKEHOUSE_BUCKET"] = "demo-lakehouse-bucket"
     _os.environ["ALERTS_TOPIC_ARN"] = "arn:aws:sns:us-east-1:123456789012:demo-alerts"
     _os.environ["AWS_DEFAULT_REGION"] = "us-east-1"
@@ -133,11 +138,13 @@ def run_mock(*, auto_replay: bool) -> int:
         _os.environ["ALERTS_TOPIC_ARN"] = sns_resp["TopicArn"]
         sm.create_secret(
             Name="demo/airflow-api-creds",
-            SecretString=json.dumps({
-                "base_url": "https://demo.airflow.example.com",
-                "username": "demo",
-                "password": "demo",
-            }),
+            SecretString=json.dumps(
+                {
+                    "base_url": "https://demo.airflow.example.com",
+                    "username": "demo",
+                    "password": "demo",
+                }
+            ),
         )
 
         # ---- Step 1: drop a malformed file in raw/ ----
@@ -155,21 +162,29 @@ def run_mock(*, auto_replay: bool) -> int:
         validator_mod = _load_handler("file_validator")
         validator_handler = validator_mod.handler
         sqs_event = {
-            "Records": [{
-                "body": json.dumps({
-                    "Records": [{
-                        "s3": {
-                            "bucket": {"name": "demo-lakehouse-bucket"},
-                            "object": {"key": key},
+            "Records": [
+                {
+                    "body": json.dumps(
+                        {
+                            "Records": [
+                                {
+                                    "s3": {
+                                        "bucket": {"name": "demo-lakehouse-bucket"},
+                                        "object": {"key": key},
+                                    }
+                                }
+                            ]
                         }
-                    }]
-                })
-            }]
+                    )
+                }
+            ]
         }
         validator_result = validator_handler(sqs_event, None)
         print(f"[2] Validator processed: {validator_result['count']} record(s)")
         for outcome in validator_result["processed"]:
-            print(f"    - {outcome['key']}: outcome={outcome['outcome']}, reason={outcome.get('reason')}")
+            print(
+                f"    - {outcome['key']}: outcome={outcome['outcome']}, reason={outcome.get('reason')}"
+            )
         print()
 
         # ---- Step 3: confirm file is in quarantine ----
@@ -185,7 +200,7 @@ def run_mock(*, auto_replay: bool) -> int:
         # Original location should be gone
         try:
             s3.head_object(Bucket="demo-lakehouse-bucket", Key=key)
-            print(f"    ✗ Original raw/ file still present (should have been deleted)")
+            print("    ✗ Original raw/ file still present (should have been deleted)")
             return 1
         except s3.exceptions.ClientError:
             pass
@@ -206,9 +221,11 @@ def run_mock(*, auto_replay: bool) -> int:
             ("fix-and-replay", "We'll upload a corrected file to _fixed/"),
         ]:
             print(f"    # {decision}: {blurb}")
-            print(f"    aws stepfunctions send-task-success \\")
+            print("    aws stepfunctions send-task-success \\")
             print(f"        --task-token '{fake_token}' \\")
-            print(f"        --task-output '{json.dumps({'decision': decision, 'operator': 'demo@example.com'})}'")
+            print(
+                f"        --task-output '{json.dumps({'decision': decision, 'operator': 'demo@example.com'})}'"
+            )
             print()
 
         if not auto_replay:
@@ -230,17 +247,24 @@ def run_mock(*, auto_replay: bool) -> int:
         from unittest.mock import patch
 
         class FakeResp:
-            def read(self): return b'{"dag_run_id": "manual__demo", "state": "queued"}'
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
+            def read(self):
+                return b'{"dag_run_id": "manual__demo", "state": "queued"}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
 
         with patch.object(helper_mod.urllib.request, "urlopen", return_value=FakeResp()):
             trigger_result = helper_mod.trigger_airflow(
                 dag_id="daily_batch_pipeline",
                 logical_date=f"{date.today().isoformat()}T00:00:00+00:00",
             )
-        print(f"    helper.trigger_airflow: triggered={trigger_result['triggered']}, "
-              f"dag_run_id={trigger_result['response']['dag_run_id']}")
+        print(
+            f"    helper.trigger_airflow: triggered={trigger_result['triggered']}, "
+            f"dag_run_id={trigger_result['response']['dag_run_id']}"
+        )
         print()
 
         # ---- Step 6: validate the corrected file would land cleanly ----
@@ -256,7 +280,9 @@ def run_mock(*, auto_replay: bool) -> int:
         validator_mod_again = _load_handler("file_validator")
         result2 = validator_mod_again.handler(sqs_event, None)
         outcome = result2["processed"][0]
-        print(f"[6] Replay validation: outcome={outcome['outcome']}, reason={outcome.get('reason')}")
+        print(
+            f"[6] Replay validation: outcome={outcome['outcome']}, reason={outcome.get('reason')}"
+        )
         if outcome["outcome"] != "validated":
             print(f"    ✗ Expected 'validated', got '{outcome['outcome']}'")
             return 1
@@ -273,16 +299,18 @@ def _make_good_parquet() -> bytes:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    table = pa.table({
-        "order_id": ["good-1", "good-2", "good-3"],
-        "customer_id": ["c1", "c2", "c3"],
-        "product_id": ["p1", "p2", "p3"],
-        "quantity": [1, 2, 3],
-        "price": [9.99, 19.99, 29.99],
-        "status": ["placed", "placed", "placed"],
-        "created_at": [None, None, None],
-        "updated_at": [None, None, None],
-    })
+    table = pa.table(
+        {
+            "order_id": ["good-1", "good-2", "good-3"],
+            "customer_id": ["c1", "c2", "c3"],
+            "product_id": ["p1", "p2", "p3"],
+            "quantity": [1, 2, 3],
+            "price": [9.99, 19.99, 29.99],
+            "status": ["placed", "placed", "placed"],
+            "created_at": [None, None, None],
+            "updated_at": [None, None, None],
+        }
+    )
     buf = io.BytesIO()
     pq.write_table(table, buf)
     return buf.getvalue()
@@ -350,8 +378,10 @@ def run_live() -> int:
             print(f"    Input: {detail['input']}")
             print()
             print("    Operator decision options:")
-            print("    aws stepfunctions send-task-success --task-token <TOKEN>"
-                  " --task-output '{\"decision\": \"discard\", ...}'")
+            print(
+                "    aws stepfunctions send-task-success --task-token <TOKEN>"
+                ' --task-output \'{"decision": "discard", ...}\''
+            )
         else:
             print("    No RUNNING executions found. Check the state machine.")
 
@@ -368,10 +398,15 @@ def run_live() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--live", action="store_true", help="Use real AWS instead of moto.")
-    parser.add_argument("--auto-replay", action="store_true",
-                        help="In mock mode, drive the replay path end-to-end (default: stop after quarantine).")
+    parser.add_argument(
+        "--auto-replay",
+        action="store_true",
+        help="In mock mode, drive the replay path end-to-end (default: stop after quarantine).",
+    )
     args = parser.parse_args(argv)
 
     if args.live:

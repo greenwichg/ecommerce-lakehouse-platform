@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -33,7 +33,7 @@ def _now() -> datetime:
     # Fixed "now" so screenshots are reproducible. The "live" path on the
     # dashboard uses datetime.now(); the mock path uses this anchor and
     # backdates from it.
-    return datetime(2025, 5, 21, 14, 30, 0, tzinfo=timezone.utc)
+    return datetime(2025, 5, 21, 14, 30, 0, tzinfo=UTC)
 
 
 def _airflow_runs() -> pd.DataFrame:
@@ -42,32 +42,43 @@ def _airflow_runs() -> pd.DataFrame:
     rows = []
     now = _now()
     dag_specs = [
-        ("daily_batch_pipeline", timedelta(days=1), 3600, 0.92),       # ~1h target, 92% success
-        ("hourly_clickstream_pipeline", timedelta(hours=1), 600, 0.97), # ~10m target, 97% success
-        ("weekly_maintenance", timedelta(days=7), 5400, 1.00),          # ~1.5h, always succeeds
+        ("daily_batch_pipeline", timedelta(days=1), 3600, 0.92),  # ~1h target, 92% success
+        ("hourly_clickstream_pipeline", timedelta(hours=1), 600, 0.97),  # ~10m target, 97% success
+        ("weekly_maintenance", timedelta(days=7), 5400, 1.00),  # ~1.5h, always succeeds
     ]
     for dag_id, cadence, target_secs, success_rate in dag_specs:
-        run_count = 20 if cadence == timedelta(hours=1) else (15 if cadence == timedelta(days=1) else 4)
+        run_count = (
+            20 if cadence == timedelta(hours=1) else (15 if cadence == timedelta(days=1) else 4)
+        )
         for i in range(run_count):
             start = now - cadence * (i + 1)
             jitter = rng.gauss(1.0, 0.15)
             duration_s = max(60, int(target_secs * jitter))
-            state = "success" if rng.random() < success_rate else rng.choice(["failed", "failed", "running"])
-            rows.append({
-                "dag_id": dag_id,
-                "run_id": f"scheduled__{start.strftime('%Y-%m-%dT%H:%M:%S')}",
-                "start_time": start,
-                "end_time": start + timedelta(seconds=duration_s) if state != "running" else None,
-                "duration_s": duration_s if state != "running" else None,
-                "state": state,
-                # Rows processed: pulled from XCom in live mode. For mock
-                # we generate plausible numbers per DAG.
-                "rows_processed": rng.randint(800_000, 1_400_000) if dag_id == "hourly_clickstream_pipeline"
-                                else rng.randint(1_500, 4_500) if dag_id == "daily_batch_pipeline"
-                                else None,
-            })
-    df = pd.DataFrame(rows).sort_values("start_time", ascending=False).reset_index(drop=True)
-    return df
+            state = (
+                "success"
+                if rng.random() < success_rate
+                else rng.choice(["failed", "failed", "running"])
+            )
+            rows.append(
+                {
+                    "dag_id": dag_id,
+                    "run_id": f"scheduled__{start.strftime('%Y-%m-%dT%H:%M:%S')}",
+                    "start_time": start,
+                    "end_time": (
+                        start + timedelta(seconds=duration_s) if state != "running" else None
+                    ),
+                    "duration_s": duration_s if state != "running" else None,
+                    "state": state,
+                    # Rows processed: pulled from XCom in live mode. For mock
+                    # we generate plausible numbers per DAG.
+                    "rows_processed": (
+                        rng.randint(800_000, 1_400_000)
+                        if dag_id == "hourly_clickstream_pipeline"
+                        else rng.randint(1_500, 4_500) if dag_id == "daily_batch_pipeline" else None
+                    ),
+                }
+            )
+    return pd.DataFrame(rows).sort_values("start_time", ascending=False).reset_index(drop=True)
 
 
 def _freshness() -> pd.DataFrame:
@@ -98,13 +109,15 @@ def _freshness() -> pd.DataFrame:
             status = "warn"
         else:
             status = "stale"
-        rows.append({
-            "table": table,
-            "last_loaded_at": last_loaded,
-            "age_hours": hours_old,
-            "sla_hours": sla_hours,
-            "status": status,
-        })
+        rows.append(
+            {
+                "table": table,
+                "last_loaded_at": last_loaded,
+                "age_hours": hours_old,
+                "sla_hours": sla_hours,
+                "status": status,
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -119,33 +132,57 @@ def _cost_per_run() -> pd.DataFrame:
     for day in range(30):
         d = (now - timedelta(days=day)).date()
         # Daily batch hits both Databricks + Snowflake
-        rows.append({
-            "run_date": d, "dag_id": "daily_batch_pipeline",
-            "compute_kind": "databricks_dbu", "credits_or_dbus": round(rng.uniform(8.0, 14.0), 2),
-        })
-        rows.append({
-            "run_date": d, "dag_id": "daily_batch_pipeline",
-            "compute_kind": "snowflake_credits", "credits_or_dbus": round(rng.uniform(3.0, 6.0), 2),
-        })
+        rows.append(
+            {
+                "run_date": d,
+                "dag_id": "daily_batch_pipeline",
+                "compute_kind": "databricks_dbu",
+                "credits_or_dbus": round(rng.uniform(8.0, 14.0), 2),
+            }
+        )
+        rows.append(
+            {
+                "run_date": d,
+                "dag_id": "daily_batch_pipeline",
+                "compute_kind": "snowflake_credits",
+                "credits_or_dbus": round(rng.uniform(3.0, 6.0), 2),
+            }
+        )
         # Hourly clickstream: Databricks heavy
-        rows.append({
-            "run_date": d, "dag_id": "hourly_clickstream_pipeline",
-            "compute_kind": "databricks_dbu", "credits_or_dbus": round(rng.uniform(15.0, 22.0), 2),
-        })
-        rows.append({
-            "run_date": d, "dag_id": "hourly_clickstream_pipeline",
-            "compute_kind": "snowflake_credits", "credits_or_dbus": round(rng.uniform(0.5, 1.5), 2),
-        })
+        rows.append(
+            {
+                "run_date": d,
+                "dag_id": "hourly_clickstream_pipeline",
+                "compute_kind": "databricks_dbu",
+                "credits_or_dbus": round(rng.uniform(15.0, 22.0), 2),
+            }
+        )
+        rows.append(
+            {
+                "run_date": d,
+                "dag_id": "hourly_clickstream_pipeline",
+                "compute_kind": "snowflake_credits",
+                "credits_or_dbus": round(rng.uniform(0.5, 1.5), 2),
+            }
+        )
         # Weekly: only on Sundays
         if d.weekday() == 6:
-            rows.append({
-                "run_date": d, "dag_id": "weekly_maintenance",
-                "compute_kind": "databricks_dbu", "credits_or_dbus": round(rng.uniform(20.0, 30.0), 2),
-            })
-            rows.append({
-                "run_date": d, "dag_id": "weekly_maintenance",
-                "compute_kind": "snowflake_credits", "credits_or_dbus": round(rng.uniform(2.0, 3.5), 2),
-            })
+            rows.append(
+                {
+                    "run_date": d,
+                    "dag_id": "weekly_maintenance",
+                    "compute_kind": "databricks_dbu",
+                    "credits_or_dbus": round(rng.uniform(20.0, 30.0), 2),
+                }
+            )
+            rows.append(
+                {
+                    "run_date": d,
+                    "dag_id": "weekly_maintenance",
+                    "compute_kind": "snowflake_credits",
+                    "credits_or_dbus": round(rng.uniform(2.0, 3.5), 2),
+                }
+            )
     return pd.DataFrame(rows).sort_values(["run_date", "dag_id"]).reset_index(drop=True)
 
 
@@ -205,18 +242,26 @@ def _recent_alerts() -> list[dict]:
     """SNS alerts published in the last 24 hours."""
     now = _now()
     return [
-        {"ts": (now - timedelta(minutes=12)).isoformat(),
-         "subject": "[Lakehouse] Quarantine queue depth = 3",
-         "severity": "warn"},
-        {"ts": (now - timedelta(hours=2)).isoformat(),
-         "subject": "[Lakehouse] currency_freshness: 60% simulated rates last hour",
-         "severity": "warn"},
-        {"ts": (now - timedelta(hours=5)).isoformat(),
-         "subject": "[Lakehouse] daily_batch_pipeline succeeded",
-         "severity": "info"},
-        {"ts": (now - timedelta(hours=23)).isoformat(),
-         "subject": "[Lakehouse] file_validator: 1 file quarantined (orders, missing_columns)",
-         "severity": "warn"},
+        {
+            "ts": (now - timedelta(minutes=12)).isoformat(),
+            "subject": "[Lakehouse] Quarantine queue depth = 3",
+            "severity": "warn",
+        },
+        {
+            "ts": (now - timedelta(hours=2)).isoformat(),
+            "subject": "[Lakehouse] currency_freshness: 60% simulated rates last hour",
+            "severity": "warn",
+        },
+        {
+            "ts": (now - timedelta(hours=5)).isoformat(),
+            "subject": "[Lakehouse] daily_batch_pipeline succeeded",
+            "severity": "info",
+        },
+        {
+            "ts": (now - timedelta(hours=23)).isoformat(),
+            "subject": "[Lakehouse] file_validator: 1 file quarantined (orders, missing_columns)",
+            "severity": "warn",
+        },
     ]
 
 
@@ -230,12 +275,8 @@ def regenerate(target_dir: Path = _MOCK_DIR) -> None:
     _cost_per_run().to_parquet(target_dir / "cost_per_run.parquet", index=False)
     _currency_fallback_rate().to_parquet(target_dir / "currency_fallback.parquet", index=False)
 
-    (target_dir / "quarantine_queue.json").write_text(
-        json.dumps(_quarantine_queue(), indent=2)
-    )
-    (target_dir / "recent_alerts.json").write_text(
-        json.dumps(_recent_alerts(), indent=2)
-    )
+    (target_dir / "quarantine_queue.json").write_text(json.dumps(_quarantine_queue(), indent=2))
+    (target_dir / "recent_alerts.json").write_text(json.dumps(_recent_alerts(), indent=2))
 
     print(f"Wrote mock data to {target_dir}")
 

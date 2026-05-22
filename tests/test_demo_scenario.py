@@ -42,7 +42,9 @@ def test_demo_mock_full_loop_runs_cleanly(capsys: pytest.CaptureFixture[str]) ->
         assert marker in captured.out, f"missing marker in demo output: {marker!r}"
 
 
-def test_demo_mock_without_auto_replay_stops_after_quarantine(capsys: pytest.CaptureFixture[str]) -> None:
+def test_demo_mock_without_auto_replay_stops_after_quarantine(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     """The default run stops after step 4 — confirm step 5 doesn't fire."""
     from demo.inject_bad_file import main
 

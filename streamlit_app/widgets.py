@@ -14,7 +14,6 @@ import streamlit as st
 
 from streamlit_app import data as data_module
 
-
 # ---------------------------------------------------------------------------
 # Widget A — Pipeline run history
 # ---------------------------------------------------------------------------
@@ -41,7 +40,9 @@ def render_pipeline_runs(df: pd.DataFrame) -> None:
     # Per-DAG run-state chart. Stacked bar by state per DAG.
     chart_df = (
         df.assign(state_label=df["state"].fillna("unknown"))
-          .groupby(["dag_id", "state_label"]).size().reset_index(name="count")
+        .groupby(["dag_id", "state_label"])
+        .size()
+        .reset_index(name="count")
     )
     chart = (
         alt.Chart(chart_df)
@@ -91,7 +92,9 @@ def render_freshness(df: pd.DataFrame) -> None:
 
     display = df.copy()
     display["status_icon"] = display["status"].map(_STATUS_ICONS).fillna("❓")
-    display["last_loaded_at"] = pd.to_datetime(display["last_loaded_at"]).dt.strftime("%Y-%m-%d %H:%M")
+    display["last_loaded_at"] = pd.to_datetime(display["last_loaded_at"]).dt.strftime(
+        "%Y-%m-%d %H:%M"
+    )
     display["age"] = display["age_hours"].apply(lambda h: f"{h:.1f}h")
     display["sla"] = display["sla_hours"].apply(lambda h: f"{int(h)}h")
     display = display[["status_icon", "table", "last_loaded_at", "age", "sla"]]
@@ -106,7 +109,9 @@ def render_freshness(df: pd.DataFrame) -> None:
 
 def render_cost_per_run(df: pd.DataFrame) -> None:
     st.subheader("Cost per pipeline (last 30 days)")
-    st.caption("Snowflake credits + Databricks DBUs stacked by DAG. The split-compute story should show two stripes per bar.")
+    st.caption(
+        "Snowflake credits + Databricks DBUs stacked by DAG. The split-compute story should show two stripes per bar."
+    )
 
     if df.empty:
         st.info("No cost data available.")
@@ -182,13 +187,19 @@ def render_quarantine_queue(queue: list[dict], *, mode: str) -> None:
                 _toast_outcome("Replay sent", resp)
             if cols[1].button("Discard", key=f"discard-{item['execution_name']}"):
                 resp = data_module.send_quarantine_decision(
-                    token, "discard", operator=_current_operator(), mode=mode,
+                    token,
+                    "discard",
+                    operator=_current_operator(),
+                    mode=mode,
                     extra={"reason": "manually discarded via dashboard"},
                 )
                 _toast_outcome("Discard sent", resp)
             if cols[2].button("Fix-and-replay", key=f"fix-{item['execution_name']}"):
                 resp = data_module.send_quarantine_decision(
-                    token, "fix-and-replay", operator=_current_operator(), mode=mode,
+                    token,
+                    "fix-and-replay",
+                    operator=_current_operator(),
+                    mode=mode,
                 )
                 _toast_outcome("Fix-and-replay sent — upload to _fixed/ to trigger replay", resp)
 
@@ -201,6 +212,7 @@ def _current_operator() -> str:
     deployment plugs in SSO / Streamlit auth here.
     """
     import os
+
     return os.environ.get("LAKEHOUSE_OPERATOR", "dashboard-user")
 
 
@@ -227,7 +239,7 @@ def render_sidebar_currency_gauge(df: pd.DataFrame) -> None:
         f"{color} Simulated share (mean)",
         f"{avg:.0%}",
         help="Share of currency_rates rows sourced from the deterministic fallback "
-             "vs the live exchangerate API. >30% = API is having a bad day.",
+        "vs the live exchangerate API. >30% = API is having a bad day.",
     )
     line = (
         alt.Chart(df)

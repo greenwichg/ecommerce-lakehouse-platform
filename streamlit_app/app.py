@@ -66,7 +66,9 @@ def main() -> None:
     # Header
     title_col, status_col = st.columns([5, 1])
     title_col.title("Ecommerce Lakehouse")
-    title_col.caption("Operations dashboard — pipeline health, freshness, cost, and the quarantine queue.")
+    title_col.caption(
+        "Operations dashboard — pipeline health, freshness, cost, and the quarantine queue."
+    )
     status_col.markdown(
         f"<div style='text-align:right; font-size:0.85rem; padding-top:1.5rem;'>"
         f"Mode: <code>{mode}</code></div>",

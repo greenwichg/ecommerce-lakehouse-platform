@@ -15,7 +15,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
-from streamlit.testing.v1 import AppTest
+from streamlit.testing.v1 import AppTest  # noqa: E402
 
 
 @pytest.fixture()
@@ -79,10 +79,17 @@ def test_quarantine_queue_renders_three_expanders_in_mock(app: AppTest) -> None:
 def test_mode_falls_back_to_mock_with_no_creds(monkeypatch: pytest.MonkeyPatch) -> None:
     """LAKEHOUSE_DASHBOARD_MODE=live + no creds → mock with a warning."""
     for var in (
-        "SNOWFLAKE_ACCOUNT", "SNOWFLAKE_USER", "SNOWFLAKE_PASSWORD",
-        "SNOWFLAKE_WAREHOUSE", "SNOWFLAKE_DATABASE",
-        "AWS_REGION", "AWS_DEFAULT_REGION", "SFN_STATE_MACHINE_ARN",
-        "AIRFLOW_BASE_URL", "AIRFLOW_USERNAME", "AIRFLOW_PASSWORD",
+        "SNOWFLAKE_ACCOUNT",
+        "SNOWFLAKE_USER",
+        "SNOWFLAKE_PASSWORD",
+        "SNOWFLAKE_WAREHOUSE",
+        "SNOWFLAKE_DATABASE",
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+        "SFN_STATE_MACHINE_ARN",
+        "AIRFLOW_BASE_URL",
+        "AIRFLOW_USERNAME",
+        "AIRFLOW_PASSWORD",
     ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("LAKEHOUSE_DASHBOARD_MODE", "live")
@@ -93,9 +100,9 @@ def test_mode_falls_back_to_mock_with_no_creds(monkeypatch: pytest.MonkeyPatch) 
     assert not at.exception
     # The fallback warning is emitted via st.warning
     warning_texts = [w.value for w in at.warning]
-    assert any("Falling back to mock" in w for w in warning_texts), (
-        f"expected fallback warning, got warnings={warning_texts}"
-    )
+    assert any(
+        "Falling back to mock" in w for w in warning_texts
+    ), f"expected fallback warning, got warnings={warning_texts}"
 
 
 def test_quarantine_button_in_mock_mode_does_not_crash(app: AppTest) -> None:
