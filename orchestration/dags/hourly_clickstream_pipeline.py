@@ -3,15 +3,7 @@
 Schedule: @hourly (00 of every hour).
 SLA:      15 minutes end-to-end.
 
-.. mermaid::
-
-    flowchart LR
-        S[S3KeySensor: events.json for this hour]
-            --> B[emit_batch_id]
-            --> BR[bronze.clickstream]
-            --> SI[silver.clickstream]
-            --> GO[gold.fact_sessions]
-            --> P[publish DATASET_FACT_SESSIONS outlet]
+Task-flow diagram: see ``docs/pipelines.md`` (rendered on GitHub).
 
 The Snowpipe + Streams + Tasks pipeline downstream of S3 gold runs
 autonomously in Snowflake — Airflow does not manage it (it's

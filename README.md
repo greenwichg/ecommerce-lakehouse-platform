@@ -232,6 +232,7 @@ scenario walkthrough and the why-not-Airflow cost comparison.
 - [`PLAN.md`](PLAN.md) — vertical slice plan, deviations, and project-complete summary
 - [`docs/architecture.md`](docs/architecture.md) — the "why" decisions, every slice
 - [`docs/data_model.md`](docs/data_model.md) — star schema, grains, SCD strategy, surrogate keys
+- [`docs/pipelines.md`](docs/pipelines.md) — rendered task-flow diagrams for the Airflow DAGs
 - [`docs/runbook.md`](docs/runbook.md) — failure modes, backfill, replay, escalation, quarantine workflow
 - [`docs/demo_failure_scenario.md`](docs/demo_failure_scenario.md) — end-to-end drill: bad file → quarantine → operator → replay
 - `infrastructure/terraform/modules/*/README.md` — per-module deep dives (IAM walkthrough, Step Functions scenario, etc.)

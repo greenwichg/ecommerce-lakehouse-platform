@@ -3,27 +3,7 @@
 Schedule: 02:00 UTC daily.
 SLA:      4 hours end-to-end.
 
-.. mermaid::
-
-    flowchart TB
-        S1[sensor: orders] --> B[bronze.expand]
-        S2[sensor: customers] --> B
-        S3[sensor: products] --> B
-        B --> SiO[silver.orders]
-        B --> SiC[silver.customers]
-        B --> SiP[silver.products]
-        SiC --> GD1[gold.dim_customer]
-        SiP --> GD2[gold.dim_product]
-        SiO --> GF1[gold.fact_orders]
-        GD1 --> GF1
-        GD2 --> GF1
-        SiO --> GF2[gold.fact_order_lifecycle]
-        GD1 --> SLD1[snowflake.dim_customer_load]
-        GD2 --> SLD2[snowflake.dim_product_load]
-        GF1 --> SLF[snowflake.orders_load]
-        GF2 --> SLF
-        SLF --> DQ1[dq.row_count]
-        SLF --> DQ2[dq.orphan_rate]
+Task-flow diagram: see ``docs/pipelines.md`` (rendered on GitHub).
 
 Slice 2 additions over Slice 1:
 - Dynamic task mapping for bronze (.expand_kwargs over SOURCES)
