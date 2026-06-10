@@ -94,9 +94,7 @@ def test_watermark_empty_df(spark: SparkSession) -> None:
     assert apply_watermark(df, "updated_at", window_days=5).count() == 0
 
 
-def test_ensure_silver_table_creates_when_missing(
-    spark: SparkSession, tmp_path: Path
-) -> None:
+def test_ensure_silver_table_creates_when_missing(spark: SparkSession, tmp_path: Path) -> None:
     target = str(tmp_path / "silver" / "orders")
     schema_df = spark.createDataFrame(
         [("placeholder", dt.datetime(2024, 1, 1))], ["order_id", "updated_at"]

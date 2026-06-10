@@ -374,49 +374,74 @@ def emit_metrics(outcome: Outcome) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _records_from_event(event: dict) -> list[tuple[str, str]]:
-    """Extract (bucket, key) tuples from an SQS event carrying S3 notifications.
+def _pairs_from_body(body: dict) -> list[tuple[str, str]]:
+    """Extract (bucket, key) tuples from one S3 notification payload.
 
-    The SQS body is the S3 notification JSON; one SQS message may bundle
-    multiple S3 records.
+    One SQS message may bundle multiple S3 records.
     """
     pairs: list[tuple[str, str]] = []
-    for sqs_record in event.get("Records", []):
-        body_str = sqs_record.get("body", "{}")
-        try:
-            body = json.loads(body_str)
-        except json.JSONDecodeError:
-            log.exception("SQS body not valid JSON; skipping")
-            continue
-        for s3_record in body.get("Records", []):
-            bucket = s3_record["s3"]["bucket"]["name"]
-            # S3 keys are URL-encoded in the notification
-            key = unquote_plus(s3_record["s3"]["object"]["key"])
-            pairs.append((bucket, key))
+    for s3_record in body.get("Records", []):
+        bucket = s3_record["s3"]["bucket"]["name"]
+        # S3 keys are URL-encoded in the notification
+        key = unquote_plus(s3_record["s3"]["object"]["key"])
+        pairs.append((bucket, key))
     return pairs
 
 
+def _process_file(bucket: str, key: str) -> dict:
+    """Validate one file and act on the outcome. Returns the summary entry."""
+    log.info("Validating s3://%s/%s", bucket, key)
+    outcome = validate(bucket, key)
+
+    write_manifest(bucket, key, outcome)
+    emit_metrics(outcome)
+
+    if outcome.severity == "quarantine":
+        quarantined_to = quarantine_file(bucket, key)
+        log.warning("Quarantined to s3://%s/%s — %s", bucket, quarantined_to, outcome.reason)
+        publish_alert(outcome, key)
+    elif outcome.severity == "warn":
+        log.info("Warn for s3://%s/%s — %s", bucket, key, outcome.warnings)
+        publish_alert(outcome, key)
+    else:
+        log.info("Validated s3://%s/%s (%d rows)", bucket, key, outcome.rows or 0)
+
+    return {"key": key, "outcome": outcome.severity, "reason": outcome.reason}
+
+
 def handler(event: dict, context: Any) -> dict:
-    """Lambda entry point."""
-    pairs = _records_from_event(event)
+    """Lambda entry point.
+
+    Implements SQS partial-batch responses — the event source mapping is
+    configured with ``ReportBatchItemFailures``, so a message whose
+    processing throws marks only itself for redelivery via
+    ``batchItemFailures`` instead of failing (and re-driving) the whole
+    batch. Without this, one transient S3/KMS error would re-deliver
+    already-quarantined siblings whose raw/ key no longer exists, poisoning
+    every retry until the batch lands in the DLQ.
+    """
     processed = []
-    for bucket, key in pairs:
-        log.info("Validating s3://%s/%s", bucket, key)
-        outcome = validate(bucket, key)
+    batch_item_failures: list[dict[str, str]] = []
+    for sqs_record in event.get("Records", []):
+        message_id = sqs_record.get("messageId")
+        try:
+            body = json.loads(sqs_record.get("body", "{}"))
+        except json.JSONDecodeError:
+            # Malformed JSON can never succeed on redelivery — drop it
+            # rather than retry-loop into the DLQ.
+            log.exception("SQS body not valid JSON; skipping")
+            continue
+        try:
+            for bucket, key in _pairs_from_body(body):
+                processed.append(_process_file(bucket, key))
+        except Exception:
+            if message_id is None:
+                raise  # direct invocation (no SQS envelope): fail loudly
+            log.exception("Message %s failed; marking for SQS redelivery", message_id)
+            batch_item_failures.append({"itemIdentifier": message_id})
 
-        write_manifest(bucket, key, outcome)
-        emit_metrics(outcome)
-
-        if outcome.severity == "quarantine":
-            quarantined_to = quarantine_file(bucket, key)
-            log.warning("Quarantined to s3://%s/%s — %s", bucket, quarantined_to, outcome.reason)
-            publish_alert(outcome, key)
-        elif outcome.severity == "warn":
-            log.info("Warn for s3://%s/%s — %s", bucket, key, outcome.warnings)
-            publish_alert(outcome, key)
-        else:
-            log.info("Validated s3://%s/%s (%d rows)", bucket, key, outcome.rows or 0)
-
-        processed.append({"key": key, "outcome": outcome.severity, "reason": outcome.reason})
-
-    return {"processed": processed, "count": len(processed)}
+    return {
+        "processed": processed,
+        "count": len(processed),
+        "batchItemFailures": batch_item_failures,
+    }

@@ -54,9 +54,7 @@ def test_batch_id_is_literal(spark: SparkSession) -> None:
 def test_explicit_ingestion_timestamp_is_used(spark: SparkSession) -> None:
     when = dt.datetime(2025, 5, 20, 14, 30, 22, tzinfo=dt.UTC)
     df = spark.createDataFrame([("o1",)], ["order_id"])
-    out = add_bronze_metadata(
-        df, batch_id="b", source_file_col=None, ingestion_timestamp=when
-    )
+    out = add_bronze_metadata(df, batch_id="b", source_file_col=None, ingestion_timestamp=when)
     row = out.first()
     # Spark may strip tz on cast; compare wall-clock components
     assert row[METADATA_INGESTION_TIMESTAMP].replace(tzinfo=None) == when.replace(tzinfo=None)

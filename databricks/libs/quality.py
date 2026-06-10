@@ -27,7 +27,10 @@ class Rule:
 
     ``name`` is surfaced in the quarantine table for diagnostics.
     ``condition`` is a SQL expression interpreted by ``pyspark.sql.functions.expr``;
-    a row is valid iff the expression evaluates to TRUE.
+    a row is valid iff the expression evaluates to TRUE. NULL is treated as
+    a failure (SQL three-valued logic would otherwise let e.g. a NULL
+    ``quantity`` slip past ``quantity > 0``). Rules where NULL is an
+    acceptable value say so explicitly: ``device IS NULL OR device IN (...)``.
     """
 
     name: str
@@ -142,9 +145,7 @@ WISHLIST_RULES: tuple[Rule, ...] = (
 _QUARANTINE_COL = "_quarantine_reason"
 
 
-def split_quarantine(
-    df: DataFrame, rules: Sequence[Rule]
-) -> tuple[DataFrame, DataFrame]:
+def split_quarantine(df: DataFrame, rules: Sequence[Rule]) -> tuple[DataFrame, DataFrame]:
     """Split ``df`` into (good, bad) by applying ``rules``.
 
     Returns:
@@ -161,8 +162,11 @@ def split_quarantine(
         return df, empty_bad
 
     # For each row, build an array of the failed rule names (NULLs filtered out).
+    # COALESCE(..., FALSE) maps a NULL-evaluating condition to a failure:
+    # a row is valid only when the condition is literally TRUE.
     fail_exprs = [
-        F.when(F.expr(f"NOT ({rule.condition})"), F.lit(rule.name)) for rule in rules
+        F.when(F.expr(f"NOT COALESCE(({rule.condition}), FALSE)"), F.lit(rule.name))
+        for rule in rules
     ]
     flagged = df.withColumn(
         "__quarantine_reasons_array",

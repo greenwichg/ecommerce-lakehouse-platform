@@ -82,7 +82,13 @@ def _build_timeline(
     max_date: dt.date,
     project_epoch: dt.date = PROJECT_EPOCH,
 ) -> list[_ProductVersion]:
-    """Compute one product's full SCD2 timeline up to ``max_date``."""
+    """Compute one product's full SCD2 timeline over the fixed horizon.
+
+    ``max_date`` only gates existence (introduction date); the version
+    chain spans (introduction, project_epoch + horizon] regardless of the
+    generation date so consecutive daily snapshots agree about a
+    product's history (see the matching note in customers.py).
+    """
     rng = seeded_rng("product", seed, product_index)
     fake = Faker()
     fake.seed_instance(rng.randint(0, 1_000_000_000))
@@ -103,13 +109,14 @@ def _build_timeline(
 
     if cfg["daily_change_pct"] <= 0:
         return versions
-    lifetime_days = max(1, (max_date - intro_date).days)
-    avg_changes = lifetime_days * cfg["daily_change_pct"] / 100.0
+    horizon_end = project_epoch + dt.timedelta(days=_INTRODUCTION_HORIZON_DAYS)
+    chain_days = max(1, (horizon_end - intro_date).days)
+    avg_changes = chain_days * cfg["daily_change_pct"] / 100.0
     n_changes = int(rng.gammavariate(max(avg_changes, 0.1), 1.0))
     if n_changes == 0:
         return versions
 
-    candidate_offsets = sorted({rng.randint(1, lifetime_days) for _ in range(n_changes)})
+    candidate_offsets = sorted({rng.randint(1, chain_days) for _ in range(n_changes)})
 
     current_price = base.price
     current_category = base.category

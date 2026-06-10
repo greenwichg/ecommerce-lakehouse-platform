@@ -106,21 +106,41 @@ def test_fact_orders_columns_and_total_amount(spark: SparkSession) -> None:
     silver = spark.createDataFrame(
         [
             (
-                "o1", "c1", "p1", 2, 10.0, "placed",
-                dt.datetime(2025, 5, 1, 10), None, None, None, None,
+                "o1",
+                "c1",
+                "p1",
+                2,
+                10.0,
+                "placed",
+                dt.datetime(2025, 5, 1, 10),
+                None,
+                None,
+                None,
+                None,
                 dt.datetime(2025, 5, 1, 10),
             )
         ],
         schema=_silver_schema(),
     )
     dim_c = _single_version_dim(spark, ["c1"], "customer_id", "customer_sk")
-    dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk", extra_cols={"category": ["electronics"]})
+    dim_p = _single_version_dim(
+        spark, ["p1"], "product_id", "product_sk", extra_cols={"category": ["electronics"]}
+    )
     fact = build_fact_orders(silver, dim_c, dim_p)
     expected = {
-        "order_sk", "order_id", "customer_id", "customer_sk",
-        "product_id", "product_sk", "category",            # Slice 4: denormalised
-        "quantity", "price", "total_amount",
-        "status", "created_at", "updated_at",
+        "order_sk",
+        "order_id",
+        "customer_id",
+        "customer_sk",
+        "product_id",
+        "product_sk",
+        "category",  # Slice 4: denormalised
+        "quantity",
+        "price",
+        "total_amount",
+        "status",
+        "created_at",
+        "updated_at",
     }
     assert set(fact.columns) == expected
     row = fact.first()
@@ -137,12 +157,26 @@ def test_fact_orders_columns_and_total_amount(spark: SparkSession) -> None:
 def test_order_sk_is_deterministic(spark: SparkSession) -> None:
     """The surrogate key must be stable across runs for the same order_id."""
     rows = [
-        ("o1", "c1", "p1", 1, 1.0, "placed",
-         dt.datetime(2025, 5, 1), None, None, None, None, dt.datetime(2025, 5, 1))
+        (
+            "o1",
+            "c1",
+            "p1",
+            1,
+            1.0,
+            "placed",
+            dt.datetime(2025, 5, 1),
+            None,
+            None,
+            None,
+            None,
+            dt.datetime(2025, 5, 1),
+        )
     ]
     df = spark.createDataFrame(rows, schema=_silver_schema())
     dim_c = _single_version_dim(spark, ["c1"], "customer_id", "customer_sk")
-    dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk", extra_cols={"category": ["electronics"]})
+    dim_p = _single_version_dim(
+        spark, ["p1"], "product_id", "product_sk", extra_cols={"category": ["electronics"]}
+    )
     a = build_fact_orders(df, dim_c, dim_p).first()["order_sk"]
     b = build_fact_orders(df, dim_c, dim_p).first()["order_sk"]
     assert a == b
@@ -152,11 +186,16 @@ def test_lifecycle_durations_decimal_days(spark: SparkSession) -> None:
     silver = spark.createDataFrame(
         [
             (
-                "o1", "c1", "p1", 1, 9.99, "delivered",
-                dt.datetime(2025, 5, 1, 10, 0, 0),     # placed
-                dt.datetime(2025, 5, 1, 22, 0, 0),     # paid 12h later = 0.5d
-                dt.datetime(2025, 5, 3, 4, 0, 0),      # shipped 1.25d later
-                dt.datetime(2025, 5, 6, 16, 0, 0),     # delivered 3.5d later
+                "o1",
+                "c1",
+                "p1",
+                1,
+                9.99,
+                "delivered",
+                dt.datetime(2025, 5, 1, 10, 0, 0),  # placed
+                dt.datetime(2025, 5, 1, 22, 0, 0),  # paid 12h later = 0.5d
+                dt.datetime(2025, 5, 3, 4, 0, 0),  # shipped 1.25d later
+                dt.datetime(2025, 5, 6, 16, 0, 0),  # delivered 3.5d later
                 None,
                 dt.datetime(2025, 5, 6, 16, 0, 0),
             )
@@ -175,9 +214,17 @@ def test_lifecycle_null_milestones_yield_null_durations(spark: SparkSession) -> 
     silver = spark.createDataFrame(
         [
             (
-                "o1", "c1", "p1", 1, 9.99, "placed",
+                "o1",
+                "c1",
+                "p1",
+                1,
+                9.99,
+                "placed",
                 dt.datetime(2025, 5, 1, 10),
-                None, None, None, None,
+                None,
+                None,
+                None,
+                None,
                 dt.datetime(2025, 5, 1, 10),
             )
         ],
@@ -198,12 +245,17 @@ def test_lifecycle_cancelled_carries_prior_milestones(spark: SparkSession) -> No
     silver = spark.createDataFrame(
         [
             (
-                "o1", "c1", "p1", 1, 9.99, "cancelled",
-                dt.datetime(2025, 5, 1, 10),       # placed
-                dt.datetime(2025, 5, 1, 22),       # paid
-                None,                              # never shipped
-                None,                              # never delivered
-                dt.datetime(2025, 5, 2, 9),        # cancelled
+                "o1",
+                "c1",
+                "p1",
+                1,
+                9.99,
+                "cancelled",
+                dt.datetime(2025, 5, 1, 10),  # placed
+                dt.datetime(2025, 5, 1, 22),  # paid
+                None,  # never shipped
+                None,  # never delivered
+                dt.datetime(2025, 5, 2, 9),  # cancelled
                 dt.datetime(2025, 5, 2, 9),
             )
         ],
@@ -229,8 +281,17 @@ def test_merge_lifecycle_fills_in_milestone(spark: SparkSession, tmp_path: Path)
     seed = spark.createDataFrame(
         [
             (
-                "o1", "c1", "p1", 1, 9.99, "placed",
-                dt.datetime(2025, 5, 1, 10), None, None, None, None,
+                "o1",
+                "c1",
+                "p1",
+                1,
+                9.99,
+                "placed",
+                dt.datetime(2025, 5, 1, 10),
+                None,
+                None,
+                None,
+                None,
                 dt.datetime(2025, 5, 1, 10),
             )
         ],
@@ -243,10 +304,17 @@ def test_merge_lifecycle_fills_in_milestone(spark: SparkSession, tmp_path: Path)
     paid_silver = spark.createDataFrame(
         [
             (
-                "o1", "c1", "p1", 1, 9.99, "paid",
+                "o1",
+                "c1",
+                "p1",
+                1,
+                9.99,
+                "paid",
                 dt.datetime(2025, 5, 1, 10),
                 dt.datetime(2025, 5, 1, 22),  # newly populated
-                None, None, None,
+                None,
+                None,
+                None,
                 dt.datetime(2025, 5, 1, 22),
             )
         ],
@@ -267,15 +335,26 @@ def test_merge_fact_orders_inserts_then_updates(spark: SparkSession, tmp_path: P
     seed = spark.createDataFrame(
         [
             (
-                "o1", "c1", "p1", 1, 9.99, "placed",
-                dt.datetime(2025, 5, 1), None, None, None, None,
+                "o1",
+                "c1",
+                "p1",
+                1,
+                9.99,
+                "placed",
+                dt.datetime(2025, 5, 1),
+                None,
+                None,
+                None,
+                None,
                 dt.datetime(2025, 5, 1),
             )
         ],
         schema=_silver_schema(),
     )
     dim_c = _single_version_dim(spark, ["c1"], "customer_id", "customer_sk")
-    dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk", extra_cols={"category": ["electronics"]})
+    dim_p = _single_version_dim(
+        spark, ["p1"], "product_id", "product_sk", extra_cols={"category": ["electronics"]}
+    )
     ensure_gold_table(spark, target, build_fact_orders(seed, dim_c, dim_p))
     merge_into_gold(spark, build_fact_orders(seed, dim_c, dim_p), target, ["order_id"])
 
@@ -283,8 +362,17 @@ def test_merge_fact_orders_inserts_then_updates(spark: SparkSession, tmp_path: P
     paid = spark.createDataFrame(
         [
             (
-                "o1", "c1", "p1", 1, 9.99, "paid",
-                dt.datetime(2025, 5, 1), dt.datetime(2025, 5, 2), None, None, None,
+                "o1",
+                "c1",
+                "p1",
+                1,
+                9.99,
+                "paid",
+                dt.datetime(2025, 5, 1),
+                dt.datetime(2025, 5, 2),
+                None,
+                None,
+                None,
                 dt.datetime(2025, 5, 2),
             )
         ],
@@ -302,15 +390,26 @@ def test_ensure_gold_table_idempotent(spark: SparkSession, tmp_path: Path) -> No
     seed = spark.createDataFrame(
         [
             (
-                "o1", "c1", "p1", 1, 9.99, "placed",
-                dt.datetime(2025, 5, 1), None, None, None, None,
+                "o1",
+                "c1",
+                "p1",
+                1,
+                9.99,
+                "placed",
+                dt.datetime(2025, 5, 1),
+                None,
+                None,
+                None,
+                None,
                 dt.datetime(2025, 5, 1),
             )
         ],
         schema=_silver_schema(),
     )
     dim_c = _single_version_dim(spark, ["c1"], "customer_id", "customer_sk")
-    dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk", extra_cols={"category": ["electronics"]})
+    dim_p = _single_version_dim(
+        spark, ["p1"], "product_id", "product_sk", extra_cols={"category": ["electronics"]}
+    )
     fact = build_fact_orders(seed, dim_c, dim_p)
     ensure_gold_table(spark, target, fact)
     ensure_gold_table(spark, target, fact)  # second call is a no-op
@@ -367,15 +466,15 @@ def test_pit_join_customer_changes_between_placement_and_silver_merge(
     silver MERGE happens at T3, with T1 < T2 < T3. The fact's customer_sk
     must bind to the T1 customer version (the one valid at placement),
     NOT to the T2 version (which only became current after placement)."""
-    t1 = dt.datetime(2025, 5, 1, 10)   # order placed
-    t2 = dt.datetime(2025, 5, 1, 14)   # customer changes address
-    t3 = dt.datetime(2025, 5, 2, 8)    # silver MERGE runs
+    t1 = dt.datetime(2025, 5, 1, 10)  # order placed
+    t2 = dt.datetime(2025, 5, 1, 14)  # customer changes address
+    t3 = dt.datetime(2025, 5, 2, 8)  # silver MERGE runs
 
     dim = _scd2_dim(
         spark,
         [
             ("sk-v1", "c1", dt.datetime(2025, 1, 1), t2, False),  # v1 valid at T1
-            ("sk-v2", "c1", t2, dt.datetime(3000, 1, 1), True),    # v2 starts at T2
+            ("sk-v2", "c1", t2, dt.datetime(3000, 1, 1), True),  # v2 starts at T2
         ],
     )
     # Fact carries created_at = T1 (placement time) and updated_at = T3
@@ -386,9 +485,9 @@ def test_pit_join_customer_changes_between_placement_and_silver_merge(
         ["order_id", "customer_id", "created_at", "updated_at"],
     )
     joined = pit_join_scd2(fact, dim, "customer_id", "customer_sk", "created_at").first()
-    assert joined["customer_sk"] == "sk-v1", (
-        "must bind to v1 (current at placement), not v2 (current at MERGE)"
-    )
+    assert (
+        joined["customer_sk"] == "sk-v1"
+    ), "must bind to v1 (current at placement), not v2 (current at MERGE)"
 
 
 def test_pit_join_orphan_yields_null_sk(spark: SparkSession) -> None:
@@ -425,9 +524,9 @@ def test_orphan_rate_counts_any_null_column(spark: SparkSession) -> None:
     fact = spark.createDataFrame(
         [
             ("sk1", "sk2"),  # ok
-            (None, "sk4"),   # orphan
-            ("sk3", None),   # orphan
-            (None, None),    # orphan (counts once, not twice)
+            (None, "sk4"),  # orphan
+            ("sk3", None),  # orphan
+            (None, None),  # orphan (counts once, not twice)
         ],
         ["customer_sk", "product_sk"],
     )
@@ -455,15 +554,26 @@ def test_build_fact_orders_orphan_customer_yields_null_sk(spark: SparkSession) -
     silver = spark.createDataFrame(
         [
             (
-                "o1", "c_missing", "p1", 1, 9.99, "placed",
-                dt.datetime(2025, 5, 1, 10), None, None, None, None,
+                "o1",
+                "c_missing",
+                "p1",
+                1,
+                9.99,
+                "placed",
+                dt.datetime(2025, 5, 1, 10),
+                None,
+                None,
+                None,
+                None,
                 dt.datetime(2025, 5, 1, 10),
             )
         ],
         schema=_silver_schema(),
     )
     dim_c = _single_version_dim(spark, ["c_present"], "customer_id", "customer_sk")
-    dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk", extra_cols={"category": ["electronics"]})
+    dim_p = _single_version_dim(
+        spark, ["p1"], "product_id", "product_sk", extra_cols={"category": ["electronics"]}
+    )
     fact = build_fact_orders(silver, dim_c, dim_p).first()
     assert fact["customer_sk"] is None
     assert fact["product_sk"] == "sk-0000"  # product still resolved

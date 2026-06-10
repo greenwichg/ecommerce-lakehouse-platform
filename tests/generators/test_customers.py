@@ -128,6 +128,33 @@ def test_updated_at_reflects_latest_version_effective_from(customers_test_cfg: d
                 break
 
 
+def test_history_is_stable_across_generation_dates(customers_test_cfg: dict) -> None:
+    """The version chain visible at date D must not depend on the date the
+    snapshot was generated for.
+
+    Regression: the chain used to be sampled over (signup, max_date], so
+    generating for D vs D+1 rewrote history — e.g. a different email at
+    the same effective_from — which downstream SCD2 merges can't
+    reconcile. The chain is now sampled over the fixed horizon and only
+    queried per date.
+    """
+    cfg = customers_test_cfg["generators"]["customers"]
+    d1 = dt.date(2025, 5, 1)
+    d2 = dt.date(2025, 5, 2)
+    cutoff = dt.datetime.combine(d1, dt.time(23, 59, 59), dt.UTC)
+    compared = 0
+    for index in range(100):
+        t1 = _build_timeline(index, 42, cfg, d1)
+        t2 = _build_timeline(index, 42, cfg, d2)
+        if not t1 or not t2:
+            continue
+        compared += 1
+        visible_1 = [v for v in t1 if v.effective_from <= cutoff]
+        visible_2 = [v for v in t2 if v.effective_from <= cutoff]
+        assert visible_1 == visible_2, f"customer {index} history rewritten between snapshots"
+    assert compared > 0, "expected at least one customer signed up by d1"
+
+
 def test_name_does_not_change(customers_test_cfg: dict) -> None:
     """Names are intentionally stable; only email/address change."""
     cfg = dict(customers_test_cfg["generators"]["customers"])

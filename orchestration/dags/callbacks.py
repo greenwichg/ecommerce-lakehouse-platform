@@ -61,7 +61,8 @@ def sns_failure_callback(context: dict[str, Any]) -> None:
         return
 
     message = _format_alert(context)
-    subject = f"[Airflow] {context.get('dag').dag_id} task failed"[:100]  # SNS limit
+    dag_id = getattr(context.get("dag"), "dag_id", "unknown")
+    subject = f"[Airflow] {dag_id} task failed"[:100]  # SNS limit
     try:
         SnsHook(aws_conn_id="aws_default").publish_to_target(
             target_arn=topic_arn,

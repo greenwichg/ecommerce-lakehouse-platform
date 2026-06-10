@@ -127,6 +127,17 @@ AS
                 AND s.session_start >= dc.effective_from
                 AND s.session_start < dc.effective_to
         WHERE s.metadata$action = 'INSERT'
+        -- A session re-emitted across two gold batches (late events grow
+        -- the session) can appear twice in the stream window — e.g. after
+        -- a backfill lands several hourly files between task runs. MERGE
+        -- rejects duplicate source keys (nondeterministic merge), which
+        -- would wedge the task permanently; keep only the newest version
+        -- per session.
+        QUALIFY
+            ROW_NUMBER() OVER (
+                PARTITION BY s.silver_session_key
+                ORDER BY s.updated_at DESC, s._loaded_at DESC
+            ) = 1
     ) AS src
         ON t.silver_session_key = src.silver_session_key
     -- Newer-wins on updated_at (= session_end): a session that grew in

@@ -48,8 +48,26 @@ def test_single_visit_yields_session_seq_1(spark: SparkSession) -> None:
     """One cookie, 3 events all within 5 min → one session, seq=1."""
     rows = [
         ("e1", "cookie-A", "c1", "page_view", "/", dt.datetime(2025, 5, 1, 10, 0), "desktop", "ua"),
-        ("e2", "cookie-A", "c1", "page_view", "/p", dt.datetime(2025, 5, 1, 10, 2), "desktop", "ua"),
-        ("e3", "cookie-A", "c1", "page_view", "/p2", dt.datetime(2025, 5, 1, 10, 5), "desktop", "ua"),
+        (
+            "e2",
+            "cookie-A",
+            "c1",
+            "page_view",
+            "/p",
+            dt.datetime(2025, 5, 1, 10, 2),
+            "desktop",
+            "ua",
+        ),
+        (
+            "e3",
+            "cookie-A",
+            "c1",
+            "page_view",
+            "/p2",
+            dt.datetime(2025, 5, 1, 10, 5),
+            "desktop",
+            "ua",
+        ),
     ]
     df = _events(spark, rows)
     out = sessionize_events(df).collect()
@@ -64,11 +82,29 @@ def test_two_visits_with_gap_yields_two_sessions(spark: SparkSession) -> None:
     rows = [
         # Visit 1
         ("e1", "cookie-A", "c1", "page_view", "/", dt.datetime(2025, 5, 1, 10, 0), "desktop", "ua"),
-        ("e2", "cookie-A", "c1", "page_view", "/p", dt.datetime(2025, 5, 1, 10, 5), "desktop", "ua"),
+        (
+            "e2",
+            "cookie-A",
+            "c1",
+            "page_view",
+            "/p",
+            dt.datetime(2025, 5, 1, 10, 5),
+            "desktop",
+            "ua",
+        ),
         # 2-hour gap
         # Visit 2
         ("e3", "cookie-A", "c1", "page_view", "/", dt.datetime(2025, 5, 1, 12, 5), "desktop", "ua"),
-        ("e4", "cookie-A", "c1", "add_to_cart", "/cart", dt.datetime(2025, 5, 1, 12, 10), "desktop", "ua"),
+        (
+            "e4",
+            "cookie-A",
+            "c1",
+            "add_to_cart",
+            "/cart",
+            dt.datetime(2025, 5, 1, 12, 10),
+            "desktop",
+            "ua",
+        ),
     ]
     df = _events(spark, rows)
     out = sessionize_events(df).collect()
@@ -86,7 +122,16 @@ def test_gap_exactly_at_threshold_does_not_break_session(spark: SparkSession) ->
     30 minutes apart stay in the same session. Documents the boundary."""
     rows = [
         ("e1", "cookie-A", None, "page_view", "/", dt.datetime(2025, 5, 1, 10, 0), "desktop", "ua"),
-        ("e2", "cookie-A", None, "page_view", "/", dt.datetime(2025, 5, 1, 10, 30), "desktop", "ua"),
+        (
+            "e2",
+            "cookie-A",
+            None,
+            "page_view",
+            "/",
+            dt.datetime(2025, 5, 1, 10, 30),
+            "desktop",
+            "ua",
+        ),
     ]
     df = _events(spark, rows)
     out = sessionize_events(df).collect()
@@ -120,8 +165,26 @@ def test_two_cookies_have_disjoint_session_keys(spark: SparkSession) -> None:
 def test_build_fact_sessions_aggregates_counts_and_timestamps(spark: SparkSession) -> None:
     rows = [
         ("e1", "cookie-A", "c1", "page_view", "/", dt.datetime(2025, 5, 1, 10, 0), "desktop", "ua"),
-        ("e2", "cookie-A", "c1", "page_view", "/p", dt.datetime(2025, 5, 1, 10, 5), "desktop", "ua"),
-        ("e3", "cookie-A", "c1", "add_to_cart", "/cart", dt.datetime(2025, 5, 1, 10, 10), "desktop", "ua"),
+        (
+            "e2",
+            "cookie-A",
+            "c1",
+            "page_view",
+            "/p",
+            dt.datetime(2025, 5, 1, 10, 5),
+            "desktop",
+            "ua",
+        ),
+        (
+            "e3",
+            "cookie-A",
+            "c1",
+            "add_to_cart",
+            "/cart",
+            dt.datetime(2025, 5, 1, 10, 10),
+            "desktop",
+            "ua",
+        ),
     ]
     df = _events(spark, rows)
     sessionized = sessionize_events(df)
@@ -139,7 +202,16 @@ def test_build_fact_sessions_aggregates_counts_and_timestamps(spark: SparkSessio
 def test_purchase_marks_converted_true(spark: SparkSession) -> None:
     rows = [
         ("e1", "cookie-A", "c1", "page_view", "/", dt.datetime(2025, 5, 1, 10, 0), "desktop", "ua"),
-        ("e2", "cookie-A", "c1", "purchase", "/orders", dt.datetime(2025, 5, 1, 10, 15), "desktop", "ua"),
+        (
+            "e2",
+            "cookie-A",
+            "c1",
+            "purchase",
+            "/orders",
+            dt.datetime(2025, 5, 1, 10, 15),
+            "desktop",
+            "ua",
+        ),
     ]
     df = _events(spark, rows)
     fact = build_fact_sessions(sessionize_events(df)).first()
@@ -161,9 +233,36 @@ def test_anonymous_then_signin_attributes_to_customer(spark: SparkSession) -> No
     purchases. The session should attribute to the customer."""
     rows = [
         ("e1", "cookie-A", None, "page_view", "/", dt.datetime(2025, 5, 1, 10, 0), "desktop", "ua"),
-        ("e2", "cookie-A", None, "page_view", "/p", dt.datetime(2025, 5, 1, 10, 3), "desktop", "ua"),
-        ("e3", "cookie-A", "c-signed-in", "add_to_cart", "/cart", dt.datetime(2025, 5, 1, 10, 8), "desktop", "ua"),
-        ("e4", "cookie-A", "c-signed-in", "purchase", "/orders", dt.datetime(2025, 5, 1, 10, 12), "desktop", "ua"),
+        (
+            "e2",
+            "cookie-A",
+            None,
+            "page_view",
+            "/p",
+            dt.datetime(2025, 5, 1, 10, 3),
+            "desktop",
+            "ua",
+        ),
+        (
+            "e3",
+            "cookie-A",
+            "c-signed-in",
+            "add_to_cart",
+            "/cart",
+            dt.datetime(2025, 5, 1, 10, 8),
+            "desktop",
+            "ua",
+        ),
+        (
+            "e4",
+            "cookie-A",
+            "c-signed-in",
+            "purchase",
+            "/orders",
+            dt.datetime(2025, 5, 1, 10, 12),
+            "desktop",
+            "ua",
+        ),
     ]
     df = _events(spark, rows)
     fact = build_fact_sessions(sessionize_events(df)).first()
@@ -179,7 +278,16 @@ def test_two_visits_yield_two_fact_rows_with_distinct_attribution(spark: SparkSe
         # 2h gap
         # Visit 2: signed in as c1 then purchase
         ("e2", "cookie-A", "c1", "page_view", "/", dt.datetime(2025, 5, 1, 12, 0), "desktop", "ua"),
-        ("e3", "cookie-A", "c1", "purchase", "/orders", dt.datetime(2025, 5, 1, 12, 10), "desktop", "ua"),
+        (
+            "e3",
+            "cookie-A",
+            "c1",
+            "purchase",
+            "/orders",
+            dt.datetime(2025, 5, 1, 12, 10),
+            "desktop",
+            "ua",
+        ),
     ]
     df = _events(spark, rows)
     facts = build_fact_sessions(sessionize_events(df)).collect()
@@ -198,9 +306,36 @@ def test_max_by_ignores_null_customer_in_middle(spark: SparkSession) -> None:
     attribute to the LAST non-null, not be confused by the trailing null."""
     rows = [
         ("e1", "cookie-A", "c1", "page_view", "/", dt.datetime(2025, 5, 1, 10, 0), "desktop", "ua"),
-        ("e2", "cookie-A", None, "page_view", "/p", dt.datetime(2025, 5, 1, 10, 3), "desktop", "ua"),
-        ("e3", "cookie-A", "c2", "page_view", "/p2", dt.datetime(2025, 5, 1, 10, 6), "desktop", "ua"),
-        ("e4", "cookie-A", None, "page_view", "/p3", dt.datetime(2025, 5, 1, 10, 9), "desktop", "ua"),
+        (
+            "e2",
+            "cookie-A",
+            None,
+            "page_view",
+            "/p",
+            dt.datetime(2025, 5, 1, 10, 3),
+            "desktop",
+            "ua",
+        ),
+        (
+            "e3",
+            "cookie-A",
+            "c2",
+            "page_view",
+            "/p2",
+            dt.datetime(2025, 5, 1, 10, 6),
+            "desktop",
+            "ua",
+        ),
+        (
+            "e4",
+            "cookie-A",
+            None,
+            "page_view",
+            "/p3",
+            dt.datetime(2025, 5, 1, 10, 9),
+            "desktop",
+            "ua",
+        ),
     ]
     df = _events(spark, rows)
     fact = build_fact_sessions(sessionize_events(df)).first()

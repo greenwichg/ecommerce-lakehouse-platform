@@ -114,8 +114,10 @@ def test_added_date_matches_added_at(spark: SparkSession) -> None:
     df = spark.createDataFrame(rows, _silver_wishlist_schema())
     dim_c = _single_version_dim(spark, ["c1"], "customer_id", "customer_sk")
     dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk")
-    by_id = {f["wishlist_event_id"]: f for f in
-             build_fact_customer_wishlist_product(df, dim_c, dim_p).collect()}
+    by_id = {
+        f["wishlist_event_id"]: f
+        for f in build_fact_customer_wishlist_product(df, dim_c, dim_p).collect()
+    }
     assert by_id["e1"]["added_date"] == dt.date(2025, 5, 1)
     assert by_id["e2"]["added_date"] == dt.date(2025, 5, 2)
 
@@ -138,9 +140,15 @@ def test_output_column_set(spark: SparkSession) -> None:
     dim_p = _single_version_dim(spark, ["p1"], "product_id", "product_sk")
     fact = build_fact_customer_wishlist_product(df, dim_c, dim_p)
     expected = {
-        "wishlist_event_sk", "wishlist_event_id",
-        "customer_id", "customer_sk",
-        "product_id", "product_sk",
-        "added_at", "added_date", "source", "updated_at",
+        "wishlist_event_sk",
+        "wishlist_event_id",
+        "customer_id",
+        "customer_sk",
+        "product_id",
+        "product_sk",
+        "added_at",
+        "added_date",
+        "source",
+        "updated_at",
     }
     assert set(fact.columns) == expected

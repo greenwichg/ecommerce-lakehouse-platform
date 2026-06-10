@@ -96,10 +96,14 @@ def _build_timeline(
     max_date: dt.date,
     project_epoch: dt.date = PROJECT_EPOCH,
 ) -> list[_CustomerVersion]:
-    """Compute one customer's full SCD2 timeline, up to ``max_date``.
+    """Compute one customer's full SCD2 timeline over the fixed horizon.
 
     Returns an empty list if the customer's signup date is after ``max_date``
-    (i.e., they don't exist yet from the perspective of that date).
+    (i.e., they don't exist yet from the perspective of that date). The
+    version chain itself does NOT depend on ``max_date`` — it spans
+    (signup, project_epoch + horizon] regardless of the generation date, so
+    consecutive daily snapshots agree about the customer's history.
+    ``_current_version_at`` picks the version visible at a given date.
     """
     rng = seeded_rng("customer", seed, customer_index)
 
@@ -125,23 +129,29 @@ def _build_timeline(
     )
     versions: list[_CustomerVersion] = [base]
 
-    # Number of changes over the customer's lifetime. The lifetime spans
-    # signup_date..max_date so a customer signed up yesterday only has 1
-    # possible change at most. Modelled as Poisson via a gamma sample
+    # Number of changes over the customer's horizon lifetime. The chain is
+    # sampled over the FIXED window (signup, project_epoch + horizon], not
+    # up to max_date: if the chain depended on the generation date, two
+    # consecutive daily snapshots would disagree about the customer's
+    # history (different RNG draws → e.g. a different email at the same
+    # updated_at), which downstream SCD2 merges can't reconcile. Expected
+    # changes visible at any date D stay ≈ days-since-signup × pct/100
+    # either way. Modelled as Poisson via a gamma sample
     # (gammavariate(k, 1) ≈ Poisson(k) for our coarse purposes).
     # Explicit short-circuit for the 0% case: gammavariate's α=0.1 floor
     # has a long enough tail to occasionally fire even at avg_changes=0.
     if cfg["daily_change_pct"] <= 0:
         return versions
-    lifetime_days = max(1, (max_date - signup_date).days)
-    avg_changes = lifetime_days * cfg["daily_change_pct"] / 100.0
+    horizon_end = project_epoch + dt.timedelta(days=_SIGNUP_HORIZON_DAYS)
+    chain_days = max(1, (horizon_end - signup_date).days)
+    avg_changes = chain_days * cfg["daily_change_pct"] / 100.0
     n_changes = int(rng.gammavariate(max(avg_changes, 0.1), 1.0))
 
-    # Change dates: distinct days drawn uniformly from (signup, max_date].
+    # Change dates: distinct days drawn uniformly from (signup, horizon_end].
     # Sorted so the resulting version chain is monotonically increasing.
     if n_changes == 0:
         return versions
-    candidate_offsets = sorted({rng.randint(1, lifetime_days) for _ in range(n_changes)})
+    candidate_offsets = sorted({rng.randint(1, chain_days) for _ in range(n_changes)})
 
     current_email = base.email
     current_address = base.address

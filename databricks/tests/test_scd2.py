@@ -52,7 +52,9 @@ def test_first_load_inserts_all_as_current(spark: SparkSession, tmp_path: Path) 
         ],
     )
     apply_scd2_merge(
-        spark, src, target,
+        spark,
+        src,
+        target,
         natural_key="customer_id",
         attribute_cols=["name", "email", "address"],
         tracked_cols=["email", "address"],
@@ -73,14 +75,18 @@ def test_reapplying_identical_source_no_op(spark: SparkSession, tmp_path: Path) 
         [("c1", "alice", "alice@a.com", "1 Main St", dt.datetime(2025, 1, 1))],
     )
     apply_scd2_merge(
-        spark, src, target,
+        spark,
+        src,
+        target,
         natural_key="customer_id",
         attribute_cols=["name", "email", "address"],
         tracked_cols=["email", "address"],
         sk_col="customer_sk",
     )
     apply_scd2_merge(
-        spark, src, target,
+        spark,
+        src,
+        target,
         natural_key="customer_id",
         attribute_cols=["name", "email", "address"],
         tracked_cols=["email", "address"],
@@ -90,16 +96,16 @@ def test_reapplying_identical_source_no_op(spark: SparkSession, tmp_path: Path) 
     assert len(rows) == 1, "identical re-apply should not create a new version"
 
 
-def test_tracked_change_closes_old_and_inserts_new(
-    spark: SparkSession, tmp_path: Path
-) -> None:
+def test_tracked_change_closes_old_and_inserts_new(spark: SparkSession, tmp_path: Path) -> None:
     target = str(tmp_path / "dim_customer")
     src_v1 = _make_silver(
         spark,
         [("c1", "alice", "alice@old.com", "1 Main St", dt.datetime(2025, 1, 1))],
     )
     apply_scd2_merge(
-        spark, src_v1, target,
+        spark,
+        src_v1,
+        target,
         natural_key="customer_id",
         attribute_cols=["name", "email", "address"],
         tracked_cols=["email", "address"],
@@ -110,7 +116,9 @@ def test_tracked_change_closes_old_and_inserts_new(
         [("c1", "alice", "alice@new.com", "1 Main St", dt.datetime(2025, 5, 1))],
     )
     apply_scd2_merge(
-        spark, src_v2, target,
+        spark,
+        src_v2,
+        target,
         natural_key="customer_id",
         attribute_cols=["name", "email", "address"],
         tracked_cols=["email", "address"],
@@ -132,9 +140,7 @@ def test_tracked_change_closes_old_and_inserts_new(
     assert rows[1]["effective_from"] == dt.datetime(2025, 5, 1)
 
 
-def test_untracked_column_change_absorbed_silently(
-    spark: SparkSession, tmp_path: Path
-) -> None:
+def test_untracked_column_change_absorbed_silently(spark: SparkSession, tmp_path: Path) -> None:
     """If we only track email but address changes, no new version emitted.
 
     Note this means the new address value is not persisted either —
@@ -147,7 +153,9 @@ def test_untracked_column_change_absorbed_silently(
         [("c1", "alice", "alice@a.com", "1 Main St", dt.datetime(2025, 1, 1))],
     )
     apply_scd2_merge(
-        spark, src_v1, target,
+        spark,
+        src_v1,
+        target,
         natural_key="customer_id",
         attribute_cols=["name", "email", "address"],
         tracked_cols=["email"],  # tracking email ONLY
@@ -158,7 +166,9 @@ def test_untracked_column_change_absorbed_silently(
         [("c1", "alice", "alice@a.com", "2 Oak Ave", dt.datetime(2025, 5, 1))],
     )
     apply_scd2_merge(
-        spark, src_v2, target,
+        spark,
+        src_v2,
+        target,
         natural_key="customer_id",
         attribute_cols=["name", "email", "address"],
         tracked_cols=["email"],
@@ -168,9 +178,7 @@ def test_untracked_column_change_absorbed_silently(
     assert len(rows) == 1
 
 
-def test_multiple_versions_chain_contiguously(
-    spark: SparkSession, tmp_path: Path
-) -> None:
+def test_multiple_versions_chain_contiguously(spark: SparkSession, tmp_path: Path) -> None:
     target = str(tmp_path / "dim_customer")
     timestamps = [
         dt.datetime(2025, 1, 1),
@@ -182,7 +190,9 @@ def test_multiple_versions_chain_contiguously(
     for ts, email in zip(timestamps, emails, strict=True):
         src = _make_silver(spark, [("c1", "alice", email, "1 Main St", ts)])
         apply_scd2_merge(
-            spark, src, target,
+            spark,
+            src,
+            target,
             natural_key="customer_id",
             attribute_cols=["name", "email", "address"],
             tracked_cols=["email"],
@@ -202,15 +212,15 @@ def test_multiple_versions_chain_contiguously(
     assert rows[-1]["email"] == "v3@x.com"
 
 
-def test_exactly_one_current_per_natural_key(
-    spark: SparkSession, tmp_path: Path
-) -> None:
+def test_exactly_one_current_per_natural_key(spark: SparkSession, tmp_path: Path) -> None:
     target = str(tmp_path / "dim_customer")
     timestamps = [dt.datetime(2025, i, 1) for i in range(1, 6)]
     for ts in timestamps:
         src = _make_silver(spark, [("c1", "alice", f"v{ts.month}@x.com", "1 Main St", ts)])
         apply_scd2_merge(
-            spark, src, target,
+            spark,
+            src,
+            target,
             natural_key="customer_id",
             attribute_cols=["name", "email", "address"],
             tracked_cols=["email"],
@@ -276,13 +286,14 @@ def test_surrogate_differs_for_different_ts(spark: SparkSession) -> None:
         ],
         ["customer_id", "updated_at"],
     )
-    sks = [r["customer_sk"] for r in compute_surrogate(df, "customer_id", "updated_at", "customer_sk").collect()]
+    sks = [
+        r["customer_sk"]
+        for r in compute_surrogate(df, "customer_id", "updated_at", "customer_sk").collect()
+    ]
     assert sks[0] != sks[1]
 
 
-def test_null_safe_equality_does_not_trigger_change(
-    spark: SparkSession, tmp_path: Path
-) -> None:
+def test_null_safe_equality_does_not_trigger_change(spark: SparkSession, tmp_path: Path) -> None:
     """Two consecutive snapshots where email is NULL in both -> no new version."""
     target = str(tmp_path / "dim_customer")
     src = _make_silver(
@@ -290,7 +301,9 @@ def test_null_safe_equality_does_not_trigger_change(
         [("c1", "alice", None, "1 Main St", dt.datetime(2025, 1, 1))],
     )
     apply_scd2_merge(
-        spark, src, target,
+        spark,
+        src,
+        target,
         natural_key="customer_id",
         attribute_cols=["name", "email", "address"],
         tracked_cols=["email", "address"],
@@ -301,7 +314,9 @@ def test_null_safe_equality_does_not_trigger_change(
         [("c1", "alice", None, "1 Main St", dt.datetime(2025, 2, 1))],
     )
     apply_scd2_merge(
-        spark, src_v2, target,
+        spark,
+        src_v2,
+        target,
         natural_key="customer_id",
         attribute_cols=["name", "email", "address"],
         tracked_cols=["email", "address"],

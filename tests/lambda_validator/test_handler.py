@@ -344,6 +344,80 @@ def test_handler_skips_invalid_sqs_body(aws: dict) -> None:
     assert result["count"] == 0
 
 
+def _sqs_message(message_id: str, *keys: str) -> dict:
+    return {
+        "messageId": message_id,
+        "body": json.dumps(
+            {
+                "Records": [
+                    {"s3": {"bucket": {"name": _TEST_BUCKET}, "object": {"key": key}}}
+                    for key in keys
+                ]
+            }
+        ),
+    }
+
+
+def test_handler_reports_partial_batch_failures(aws: dict) -> None:
+    """A message that throws marks only itself in batchItemFailures.
+
+    The SQS event source mapping is configured with
+    ReportBatchItemFailures; the good message's work must not be re-driven
+    because a sibling message failed (its file may already have moved to
+    quarantine/, so a batch-wide retry can never succeed).
+    """
+    from handler import handler
+
+    good_key = "raw/orders/year=2025/month=05/day=01/orders.parquet"
+    _put(aws, good_key, _orders_parquet())
+    # The bad message references an object that doesn't exist → head_object
+    # raises inside validate() → per-message failure.
+    missing_key = "raw/orders/year=2025/month=05/day=02/orders.parquet"
+
+    event = {"Records": [_sqs_message("msg-good", good_key), _sqs_message("msg-bad", missing_key)]}
+    result = handler(event, None)
+
+    assert result["count"] == 1
+    assert result["processed"][0]["key"] == good_key
+    assert result["batchItemFailures"] == [{"itemIdentifier": "msg-bad"}]
+
+
+def test_handler_clean_batch_reports_no_failures(aws: dict) -> None:
+    from handler import handler
+
+    key = "raw/orders/year=2025/month=05/day=01/orders.parquet"
+    _put(aws, key, _orders_parquet())
+    result = handler({"Records": [_sqs_message("msg-1", key)]}, None)
+    assert result["count"] == 1
+    assert result["batchItemFailures"] == []
+
+
+def test_handler_without_message_id_raises(aws: dict) -> None:
+    """Direct invocations (no SQS envelope / messageId) keep failing loudly."""
+    from handler import handler
+
+    event = {
+        "Records": [
+            {
+                "body": json.dumps(
+                    {
+                        "Records": [
+                            {
+                                "s3": {
+                                    "bucket": {"name": _TEST_BUCKET},
+                                    "object": {"key": "raw/orders/missing.parquet"},
+                                }
+                            }
+                        ]
+                    }
+                )
+            }
+        ]
+    }
+    with pytest.raises(Exception):  # noqa: B017 — any boto3 client error is fine
+        handler(event, None)
+
+
 def test_publish_alert_includes_severity_in_subject(aws: dict) -> None:
     """Subject capped at 100 chars (SNS limit) and includes severity."""
     from handler import Outcome, publish_alert

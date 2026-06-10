@@ -91,10 +91,11 @@ jobs:
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        # The bundle config lives in databricks/bundle.yml and selects
+        # the target environment by --target. See databricks/README.md
+        # for the bundle layout.
+        working-directory: databricks
         run: |
-          # The bundle config lives in databricks/bundle.yml and selects
-          # the target environment by --target. See databricks/README.md
-          # for the bundle layout.
           databricks bundle validate --target ${{ inputs.environment }}
           databricks bundle deploy --target ${{ inputs.environment }}
 

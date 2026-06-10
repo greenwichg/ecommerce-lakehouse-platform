@@ -407,11 +407,11 @@ operators see every outcome:
 |---|---|
 | `replay` | move `quarantine/...` → `raw/...` → trigger Airflow DAG |
 | `discard` | append to `processed/_quarantine_audit/<date>.jsonl` + delete S3 object |
-| `fix-and-replay` | notify operator of expected `_fixed/<filename>` upload path → poll for file → move → trigger DAG |
+| `fix-and-replay` | notify operator of the exact `<parent>/_fixed/<filename>` upload key → poll for file → replay the FIXED file to the original raw/ key (deleting both quarantine objects) → trigger DAG |
 
 The `quarantine_helper` Lambda holds the discrete S3/Airflow
 operations as pure functions (`discard`, `move_to_raw`, `poll_for_fix`,
-`trigger_airflow`) so they're unit-testable with moto. ASL JSON is
+`replay_fixed`, `trigger_airflow`) so they're unit-testable with moto. ASL JSON is
 statically validated by `tests/lambda_quarantine_helper/test_state_machine_definition.py`
 (no orphan states, all `Next` targets resolve, the polling loop's
 back-edge is intact).

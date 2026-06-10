@@ -129,6 +129,58 @@ def test_poll_for_fix_returns_absent_when_missing(aws: dict) -> None:
     }
 
 
+def test_replay_fixed_promotes_fix_and_cleans_quarantine(aws: dict) -> None:
+    """fix-and-replay: the FIXED bytes land at the original raw/ key and
+    both quarantine objects (bad original + fix copy) are removed."""
+    from handler import replay_fixed
+
+    q_key = "quarantine/orders/year=2025/month=05/day=01/orders.parquet"
+    fix_key = "quarantine/orders/year=2025/month=05/day=01/_fixed/orders.parquet"
+    aws["s3"].put_object(Bucket=_TEST_BUCKET, Key=q_key, Body=b"bad original")
+    aws["s3"].put_object(Bucket=_TEST_BUCKET, Key=fix_key, Body=b"corrected contents")
+
+    result = replay_fixed(q_key, operator="alice")
+    assert result == {
+        "moved": True,
+        "from": fix_key,
+        "to": "raw/orders/year=2025/month=05/day=01/orders.parquet",
+        "superseded": q_key,
+    }
+
+    # The raw/ key now holds the CORRECTED bytes, not the bad original
+    assert (
+        aws["s3"].get_object(Bucket=_TEST_BUCKET, Key=result["to"])["Body"].read()
+        == b"corrected contents"
+    )
+    # Both quarantine objects are gone
+    for gone in (q_key, fix_key):
+        with pytest.raises(aws["s3"].exceptions.ClientError):
+            aws["s3"].head_object(Bucket=_TEST_BUCKET, Key=gone)
+
+    # Audit entry records the supersession
+    objects = aws["s3"].list_objects_v2(Bucket=_TEST_BUCKET, Prefix="processed/_quarantine_audit/")[
+        "Contents"
+    ]
+    body = aws["s3"].get_object(Bucket=_TEST_BUCKET, Key=objects[0]["Key"])["Body"].read()
+    entry = json.loads(body.decode().strip())
+    assert entry["action"] == "replay_fixed"
+    assert entry["superseded"] == q_key
+    assert entry["operator"] == "alice"
+
+
+def test_replay_fixed_via_handler_dispatch(aws: dict) -> None:
+    from handler import handler
+
+    q_key = "quarantine/orders/year=2025/month=05/day=01/orders.parquet"
+    fix_key = "quarantine/orders/year=2025/month=05/day=01/_fixed/orders.parquet"
+    aws["s3"].put_object(Bucket=_TEST_BUCKET, Key=q_key, Body=b"bad")
+    aws["s3"].put_object(Bucket=_TEST_BUCKET, Key=fix_key, Body=b"fixed")
+
+    result = handler({"action": "replay_fixed", "quarantine_key": q_key, "operator": "alice"}, None)
+    assert result["moved"] is True
+    assert result["from"] == fix_key
+
+
 def test_trigger_airflow_posts_to_airflow_rest_api(aws: dict) -> None:
     from handler import trigger_airflow
 

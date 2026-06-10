@@ -46,35 +46,44 @@ NotifyOpsForReview
 WaitForOperatorDecision  ←─── operator calls SendTaskSuccess(decision=...)
         │
         ▼
-   ┌──RouteOnDecision──┐
-   │         │         │
-   ▼         ▼         ▼
-replay   discard   fix-and-replay
-   │         │         │
-   │         │         ▼
-   │         │   NotifyFixPath
-   │         │         │
-   │         │         ▼
-   │         │   WaitForFixedFile (300s)
-   │         │         │
-   │         │         ▼
-   │         │   PollForFixedFile
-   │         │         │
-   │         │         ▼
-   │         │   FixedFilePresentChoice
-   │         │      │      └─false─→ back to WaitForFixedFile
-   │         │      │
-   │         │      true
-   │         │      ▼
-   ▼         ▼      ▼
-MoveBackToRaw      DiscardFile
-   │
-   ▼
-TriggerAirflowDAG
+   ┌──RouteOnDecision─────┐
+   │         │            │
+   ▼         ▼            ▼
+replay   discard      fix-and-replay
+   │         │            │
+   │         ▼            ▼
+   │   DiscardFile   ComputeFixPath (helper poll_for_fix → exact _fixed/ key)
+   │         │            │
+   │         ▼            ▼
+   │   DiscardLogged NotifyFixPath (quotes that exact upload key)
+   │                      │
+   │                      ▼
+   │                 WaitForFixedFile (300s)
+   │                      │
+   │                      ▼
+   │                 PollForFixedFile
+   │                      │
+   │                      ▼
+   │                 FixedFilePresentChoice
+   │                      │      └─false─→ back to WaitForFixedFile
+   │                      │ true
+   │                      ▼
+   │                 ReplayFixedFile (fixed bytes → original raw/ key;
+   │                      │           bad original + fix copy deleted)
+   ▼                      │
+MoveBackToRaw             │
+   │                      │
+   ▼                      │
+TriggerAirflowDAG ←───────┘
    │
    ▼
 ReplaySuccess
 ```
+
+Note the fix-and-replay branch ends in `ReplayFixedFile`, NOT
+`MoveBackToRaw`: replaying the original quarantined bytes would just
+re-quarantine them. The corrected `_fixed/` upload is what goes back to
+the original raw/ key, and both quarantine objects are cleaned up.
 
 Plus failure / timeout terminals:
 
@@ -128,8 +137,12 @@ The `quarantine_helper` Lambda (small; pure stdlib + boto3) handles
 the discrete S3 / Airflow operations the state machine needs:
 
 - `discard`: delete quarantined object + write audit log
-- `move_to_raw`: copy back to raw/ (triggers the S3 → validator chain)
-- `poll_for_fix`: check whether `_fixed/<filename>` exists in S3
+- `move_to_raw`: copy back to raw/ (triggers the S3 → validator chain);
+  used by the plain replay branch where the original bytes were fine
+- `poll_for_fix`: check whether `<parent>/_fixed/<filename>` exists in
+  S3; returns the expected key either way so the notification can quote it
+- `replay_fixed`: copy the `_fixed/` upload to the original raw/ key,
+  delete both quarantine objects; used by the fix-and-replay branch
 - `trigger_airflow`: POST to Airflow REST API to launch the DAG
 
 Each action is a clean unit-testable function; tests live in

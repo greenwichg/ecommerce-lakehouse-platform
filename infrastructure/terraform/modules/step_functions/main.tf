@@ -4,8 +4,9 @@
 # Three branches after the WaitForOperatorDecision pause:
 #   - replay        → move quarantine→raw → trigger Airflow DAG
 #   - discard       → delete + audit log + notify
-#   - fix-and-replay → notify operator of fix path → poll for fix →
-#                      move quarantine→raw → trigger Airflow DAG
+#   - fix-and-replay → notify operator of the exact _fixed/ upload key →
+#                      poll for fix → replay the FIXED file to the
+#                      original raw/ key → trigger Airflow DAG
 #
 # Why Step Functions (and not Airflow):
 #   - WaitForOperatorDecision uses ``waitForTaskToken``, which holds the

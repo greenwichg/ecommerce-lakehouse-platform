@@ -83,6 +83,27 @@ def test_price_stays_in_bounds_across_versions(products_test_cfg: dict) -> None:
             ), f"product {index} v.price {v.price} out of bounds"
 
 
+def test_history_is_stable_across_generation_dates(products_test_cfg: dict) -> None:
+    """Same regression guard as the customers generator: the version chain
+    visible at date D must be identical whether the snapshot was generated
+    for D or D+1 — no history rewrites between consecutive daily snapshots."""
+    cfg = products_test_cfg["generators"]["products"]
+    d1 = dt.date(2025, 5, 1)
+    d2 = dt.date(2025, 5, 2)
+    cutoff = dt.datetime.combine(d1, dt.time(23, 59, 59), dt.UTC)
+    compared = 0
+    for index in range(100):
+        t1 = _build_timeline(index, 42, cfg, d1)
+        t2 = _build_timeline(index, 42, cfg, d2)
+        if not t1 or not t2:
+            continue
+        compared += 1
+        visible_1 = [v for v in t1 if v.effective_from <= cutoff]
+        visible_2 = [v for v in t2 if v.effective_from <= cutoff]
+        assert visible_1 == visible_2, f"product {index} history rewritten between snapshots"
+    assert compared > 0
+
+
 def test_category_drift_flips_to_different_category(products_test_cfg: dict) -> None:
     """A category-change event must move to a NEW category, not echo the same one."""
     cfg = dict(products_test_cfg["generators"]["products"])

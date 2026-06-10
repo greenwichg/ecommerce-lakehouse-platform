@@ -86,9 +86,31 @@ def test_fix_and_replay_polling_loop_exists() -> None:
     # Choice's Default goes back to Wait (the polling loop)
     choice = d["States"]["FixedFilePresentChoice"]
     assert choice["Default"] == "WaitForFixedFile"
-    # And the true branch goes to MoveBackToRaw (same as replay)
+    # The true branch must replay the FIXED file (action=replay_fixed),
+    # NOT MoveBackToRaw — moving the original bytes back to raw/ would
+    # just re-quarantine them.
     true_branch = next(c for c in choice["Choices"] if c.get("BooleanEquals") is True)
-    assert true_branch["Next"] == "MoveBackToRaw"
+    assert true_branch["Next"] == "ReplayFixedFile"
+    replay_fixed = d["States"]["ReplayFixedFile"]
+    assert replay_fixed["Parameters"]["Payload"]["action"] == "replay_fixed"
+    assert replay_fixed["Next"] == "TriggerAirflowDAG"
+
+
+def test_fix_path_notification_quotes_exact_upload_key() -> None:
+    """The operator notification must quote the exact key poll_for_fix
+    checks (computed by the helper, surfaced via $.poll.Payload.key) —
+    a hand-formatted path drifted from the poller once already."""
+    d = _load_definition()
+    # The branch first computes the fix path via the helper...
+    router = d["States"]["RouteOnDecision"]
+    fix_choice = next(c for c in router["Choices"] if c["StringEquals"] == "fix-and-replay")
+    assert fix_choice["Next"] == "ComputeFixPath"
+    compute = d["States"]["ComputeFixPath"]
+    assert compute["Parameters"]["Payload"]["action"] == "poll_for_fix"
+    assert compute["Next"] == "NotifyFixPath"
+    # ...then the SNS message interpolates that computed key.
+    notify = d["States"]["NotifyFixPath"]
+    assert "$.poll.Payload.key" in notify["Parameters"]["Message.$"]
 
 
 def test_replay_path_triggers_airflow() -> None:

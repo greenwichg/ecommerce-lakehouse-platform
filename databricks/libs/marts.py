@@ -107,9 +107,7 @@ def build_customer_ltv(
     )
 
 
-def ensure_mart_table(
-    spark: SparkSession, path: str, schema_df: DataFrame
-) -> None:
+def ensure_mart_table(spark: SparkSession, path: str, schema_df: DataFrame) -> None:
     """Idempotent create of an empty mart Delta table.
 
     Marts are full-refresh per run (small enough that incremental MERGE is
@@ -131,9 +129,4 @@ def write_mart_overwrite(df: DataFrame, path: str) -> None:
     ``overwriteSchema`` option lets a schema evolution in the builder
     propagate without manual DDL.
     """
-    (
-        df.write.format("delta")
-        .mode("overwrite")
-        .option("overwriteSchema", "true")
-        .save(path)
-    )
+    (df.write.format("delta").mode("overwrite").option("overwriteSchema", "true").save(path))

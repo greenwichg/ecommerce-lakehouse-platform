@@ -67,12 +67,8 @@ def build_fact_customer_wishlist_product(
         F.col("source"),
         F.col("added_at").alias("updated_at"),
     )
-    with_customer = pit_join_scd2(
-        base, dim_customer, "customer_id", "customer_sk", "added_at"
-    )
-    with_both = pit_join_scd2(
-        with_customer, dim_product, "product_id", "product_sk", "added_at"
-    )
+    with_customer = pit_join_scd2(base, dim_customer, "customer_id", "customer_sk", "added_at")
+    with_both = pit_join_scd2(with_customer, dim_product, "product_id", "product_sk", "added_at")
     # Reorder so surrogates sit next to their natural keys
     return with_both.select(
         "wishlist_event_sk",

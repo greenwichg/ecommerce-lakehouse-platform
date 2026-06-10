@@ -384,9 +384,14 @@ For fix-and-replay, the operator then uploads the corrected file to:
 s3://<lakehouse-bucket>/quarantine/<source>/<partitions>/_fixed/<original-filename>
 ```
 
-The state machine polls for that key every 5 minutes (configurable in
-`definition.asl.json`'s `WaitForFixedFile.Seconds`) and replays
-automatically when it appears.
+(The `NotifyFixPath` SNS alert quotes this exact key — it's computed by
+the helper's `poll_for_fix`, so the instruction can't drift from what
+the poller checks.) The state machine polls for that key every 5
+minutes (configurable in `definition.asl.json`'s
+`WaitForFixedFile.Seconds`); when it appears, the `replay_fixed` helper
+action copies the corrected file to the ORIGINAL raw/ key — not the
+quarantined original, which stays bad by definition — deletes both
+quarantine objects, and triggers the DAG.
 
 The 7-day timeout on `WaitForOperatorDecision` is the hard SLA — past
 that the execution moves to `OperatorTimedOut` and pages ops. Pick

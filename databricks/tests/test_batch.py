@@ -43,9 +43,9 @@ def test_unique_suffix_at_same_timestamp() -> None:
     "bad",
     [
         "not-a-batch-id",
-        "20250520T143022Z",          # missing suffix
+        "20250520T143022Z",  # missing suffix
         "20250520T143022Z-deadbeefX",  # suffix too long
-        "20250520T143022Z-zzzzzzzz",   # non-hex suffix
+        "20250520T143022Z-zzzzzzzz",  # non-hex suffix
         "",
     ],
 )

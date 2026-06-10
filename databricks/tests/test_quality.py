@@ -61,25 +61,44 @@ def test_orders_rules_smoke(spark: SparkSession) -> None:
     now = dt.datetime(2025, 5, 20, 12, 0, 0)
     rows = [
         {
-            "order_id": "o1", "customer_id": "c1", "product_id": "p1",
-            "quantity": 1, "price": 10.0, "status": "placed",
+            "order_id": "o1",
+            "customer_id": "c1",
+            "product_id": "p1",
+            "quantity": 1,
+            "price": 10.0,
+            "status": "placed",
             "created_at": now - dt.timedelta(hours=2),
             "updated_at": now - dt.timedelta(hours=1),
         },
         {  # bad: status unknown
-            "order_id": "o2", "customer_id": "c1", "product_id": "p1",
-            "quantity": 1, "price": 10.0, "status": "WAT",
-            "created_at": now - dt.timedelta(hours=1), "updated_at": now,
+            "order_id": "o2",
+            "customer_id": "c1",
+            "product_id": "p1",
+            "quantity": 1,
+            "price": 10.0,
+            "status": "WAT",
+            "created_at": now - dt.timedelta(hours=1),
+            "updated_at": now,
         },
         {  # bad: quantity <= 0
-            "order_id": "o3", "customer_id": "c1", "product_id": "p1",
-            "quantity": 0, "price": 10.0, "status": "placed",
-            "created_at": now - dt.timedelta(hours=1), "updated_at": now,
+            "order_id": "o3",
+            "customer_id": "c1",
+            "product_id": "p1",
+            "quantity": 0,
+            "price": 10.0,
+            "status": "placed",
+            "created_at": now - dt.timedelta(hours=1),
+            "updated_at": now,
         },
         {  # bad: negative price + null customer (two reasons)
-            "order_id": "o4", "customer_id": None, "product_id": "p1",
-            "quantity": 1, "price": -5.0, "status": "placed",
-            "created_at": now - dt.timedelta(hours=1), "updated_at": now,
+            "order_id": "o4",
+            "customer_id": None,
+            "product_id": "p1",
+            "quantity": 1,
+            "price": -5.0,
+            "status": "placed",
+            "created_at": now - dt.timedelta(hours=1),
+            "updated_at": now,
         },
     ]
     df = spark.createDataFrame(rows)
@@ -93,14 +112,75 @@ def test_orders_rules_smoke(spark: SparkSession) -> None:
     assert "price_positive" in reasons["o4"]
 
 
+def test_null_condition_counts_as_failure(spark: SparkSession) -> None:
+    """A rule whose condition evaluates to NULL (not TRUE) must quarantine.
+
+    SQL three-valued logic: ``quantity > 0`` is NULL for a NULL quantity.
+    Without an explicit COALESCE in split_quarantine, such rows would slip
+    through as good even though the contract is "valid iff TRUE".
+    """
+    rules = [Rule("qty_positive", "qty > 0")]
+    df = spark.createDataFrame([(1,), (None,)], "qty int")
+    good, bad = split_quarantine(df, rules)
+    assert good.count() == 1
+    assert bad.count() == 1
+    assert bad.first()["_quarantine_reason"] == "qty_positive"
+
+
+def test_explicit_is_null_guard_still_passes_nulls(spark: SparkSession) -> None:
+    """Rules that whitelist NULL explicitly keep accepting NULL values."""
+    rules = [Rule("device_known", "device IS NULL OR device IN ('desktop', 'mobile')")]
+    df = spark.createDataFrame([("desktop",), (None,), ("toaster",)], "device string")
+    good, bad = split_quarantine(df, rules)
+    assert good.count() == 2  # 'desktop' and NULL
+    assert bad.count() == 1  # 'toaster'
+
+
+def test_orders_rules_null_quantity_and_price_quarantined(spark: SparkSession) -> None:
+    """End-to-end ORDERS_RULES: NULL quantity / price / status are bad rows."""
+    now = dt.datetime(2025, 5, 20, 12, 0, 0)
+    base = {
+        "order_id": "o1",
+        "customer_id": "c1",
+        "product_id": "p1",
+        "quantity": 1,
+        "price": 10.0,
+        "status": "placed",
+        "created_at": now - dt.timedelta(hours=2),
+        "updated_at": now - dt.timedelta(hours=1),
+    }
+    rows = [
+        {**base, "order_id": "ok"},
+        {**base, "order_id": "null_qty", "quantity": None},
+        {**base, "order_id": "null_price", "price": None},
+        {**base, "order_id": "null_status", "status": None},
+    ]
+    schema = (
+        "order_id string, customer_id string, product_id string, quantity int, "
+        "price double, status string, created_at timestamp, updated_at timestamp"
+    )
+    df = spark.createDataFrame(rows, schema)
+    good, bad = split_quarantine(df, ORDERS_RULES)
+    assert {r["order_id"] for r in good.collect()} == {"ok"}
+    reasons = {r["order_id"]: r["_quarantine_reason"] for r in bad.collect()}
+    assert "quantity_positive" in reasons["null_qty"]
+    assert "price_positive" in reasons["null_price"]
+    assert "status_known" in reasons["null_status"]
+
+
 def test_orders_rules_updated_at_before_created_at(spark: SparkSession) -> None:
     """Pathological clock skew where updated_at < created_at should be flagged."""
     now = dt.datetime(2025, 5, 20, 12, 0, 0)
     rows = [
         {
-            "order_id": "o1", "customer_id": "c1", "product_id": "p1",
-            "quantity": 1, "price": 10.0, "status": "placed",
-            "created_at": now, "updated_at": now - dt.timedelta(hours=1),
+            "order_id": "o1",
+            "customer_id": "c1",
+            "product_id": "p1",
+            "quantity": 1,
+            "price": 10.0,
+            "status": "placed",
+            "created_at": now,
+            "updated_at": now - dt.timedelta(hours=1),
         }
     ]
     df = spark.createDataFrame(rows)

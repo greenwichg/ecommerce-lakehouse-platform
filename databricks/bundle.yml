@@ -1,0 +1,248 @@
+# Databricks Asset Bundle for the lakehouse ETL jobs.
+#
+# Deployed by .github/workflows/deploy.yml (databricks-deploy job):
+#
+#     cd databricks
+#     databricks bundle validate --target <env>
+#     databricks bundle deploy   --target <env>
+#
+# One job per notebook, named after the Airflow Variable that carries its
+# job ID (databricks_job_<key> — see orchestration/dags/*.py). After a
+# first deploy, copy the created job IDs into those Airflow Variables.
+#
+# Every job runs on an ephemeral spot-first job cluster (not all-purpose
+# compute) per the cost model in docs/architecture.md. The cluster spec is
+# shared via a YAML anchor; the per-job bits are just the notebook path.
+
+bundle:
+  name: ecommerce-lakehouse-platform
+
+variables:
+  spark_version:
+    description: Databricks Runtime for all jobs (15.x LTS per README).
+    default: 15.4.x-scala2.12
+  node_type_id:
+    description: Worker node type for the ephemeral job clusters.
+    default: m5.large
+
+targets:
+  dev:
+    default: true
+    mode: development
+  prod:
+    mode: production
+    workspace:
+      root_path: /Shared/.bundle/prod/${bundle.name}
+
+resources:
+  jobs:
+    # ----------------------------------------------------------------- bronze
+    bronze_orders:
+      name: bronze_orders
+      job_clusters: &etl_cluster
+        - job_cluster_key: etl
+          new_cluster:
+            spark_version: ${var.spark_version}
+            node_type_id: ${var.node_type_id}
+            num_workers: 1
+            aws_attributes:
+              availability: SPOT_WITH_FALLBACK
+              first_on_demand: 1
+      tasks:
+        - task_key: run
+          job_cluster_key: etl
+          notebook_task:
+            notebook_path: ./notebooks/bronze/bronze_orders.py
+            base_parameters: &params {env: "${bundle.target}", batch_id: ""}
+
+    bronze_customers:
+      name: bronze_customers
+      job_clusters: *etl_cluster
+      tasks:
+        - task_key: run
+          job_cluster_key: etl
+          notebook_task:
+            notebook_path: ./notebooks/bronze/bronze_customers.py
+            base_parameters: *params
+
+    bronze_products:
+      name: bronze_products
+      job_clusters: *etl_cluster
+      tasks:
+        - task_key: run
+          job_cluster_key: etl
+          notebook_task:
+            notebook_path: ./notebooks/bronze/bronze_products.py
+            base_parameters: *params
+
+    bronze_currency_rates:
+      name: bronze_currency_rates
+      job_clusters: *etl_cluster
+      tasks:
+        - task_key: run
+          job_cluster_key: etl
+          notebook_task:
+            notebook_path: ./notebooks/bronze/bronze_currency_rates.py
+            base_parameters: *params
+
+    bronze_wishlist:
+      name: bronze_wishlist
+      job_clusters: *etl_cluster
+      tasks:
+        - task_key: run
+          job_cluster_key: etl
+          notebook_task:
+            notebook_path: ./notebooks/bronze/bronze_wishlist.py
+            base_parameters: *params
+
+    bronze_clickstream:
+      name: bronze_clickstream
+      job_clusters: *etl_cluster
+      tasks:
+        - task_key: run
+          job_cluster_key: etl
+          notebook_task:
+            notebook_path: ./notebooks/bronze/bronze_clickstream.py
+            base_parameters: *params
+
+    # ----------------------------------------------------------------- silver
+    silver_orders:
+      name: silver_orders
+      job_clusters: *etl_cluster
+      tasks:
+        - task_key: run
+          job_cluster_key: etl
+          notebook_task:
+            notebook_path: ./notebooks/silver/silver_orders.py
+            base_parameters: *params
+
+    silver_customers:
+      name: silver_customers
+      job_clusters: *etl_cluster
+      tasks:
+        - task_key: run
+          job_cluster_key: etl
+          notebook_task:
+            notebook_path: ./notebooks/silver/silver_customers.py
+            base_parameters: *params
+
+    silver_products:
+      name: silver_products
+      job_clusters: *etl_cluster
+      tasks:
+        - task_key: run
+          job_cluster_key: etl
+          notebook_task:
+            notebook_path: ./notebooks/silver/silver_products.py
+            base_parameters: *params
+
+    silver_currency_rates:
+      name: silver_currency_rates
+      job_clusters: *etl_cluster
+      tasks:
+        - task_key: run
+          job_cluster_key: etl
+          notebook_task:
+            notebook_path: ./notebooks/silver/silver_currency_rates.py
+            base_parameters: *params
+
+    silver_wishlist:
+      name: silver_wishlist
+      job_clusters: *etl_cluster
+      tasks:
+        - task_key: run
+          job_cluster_key: etl
+          notebook_task:
+            notebook_path: ./notebooks/silver/silver_wishlist.py
+            base_parameters: *params
+
+    silver_clickstream:
+      name: silver_clickstream
+      job_clusters: *etl_cluster
+      tasks:
+        - task_key: run
+          job_cluster_key: etl
+          notebook_task:
+            notebook_path: ./notebooks/silver/silver_clickstream.py
+            base_parameters: *params
+
+    # ------------------------------------------------------------------- gold
+    gold_dim_customer:
+      name: gold_dim_customer
+      job_clusters: *etl_cluster
+      tasks:
+        - task_key: run
+          job_cluster_key: etl
+          notebook_task:
+            notebook_path: ./notebooks/gold/gold_dim_customer.py
+            base_parameters: *params
+
+    gold_dim_product:
+      name: gold_dim_product
+      job_clusters: *etl_cluster
+      tasks:
+        - task_key: run
+          job_cluster_key: etl
+          notebook_task:
+            notebook_path: ./notebooks/gold/gold_dim_product.py
+            base_parameters: *params
+
+    gold_fact_orders:
+      name: gold_fact_orders
+      job_clusters: *etl_cluster
+      tasks:
+        - task_key: run
+          job_cluster_key: etl
+          notebook_task:
+            notebook_path: ./notebooks/gold/gold_fact_orders.py
+            base_parameters: *params
+
+    gold_fact_order_lifecycle:
+      name: gold_fact_order_lifecycle
+      job_clusters: *etl_cluster
+      tasks:
+        - task_key: run
+          job_cluster_key: etl
+          notebook_task:
+            notebook_path: ./notebooks/gold/gold_fact_order_lifecycle.py
+            base_parameters: *params
+
+    gold_fact_sessions:
+      name: gold_fact_sessions
+      job_clusters: *etl_cluster
+      tasks:
+        - task_key: run
+          job_cluster_key: etl
+          notebook_task:
+            notebook_path: ./notebooks/gold/gold_fact_sessions.py
+            base_parameters: *params
+
+    gold_currency_rates:
+      name: gold_currency_rates
+      job_clusters: *etl_cluster
+      tasks:
+        - task_key: run
+          job_cluster_key: etl
+          notebook_task:
+            notebook_path: ./notebooks/gold/gold_currency_rates.py
+            base_parameters: *params
+
+    gold_fact_customer_wishlist_product:
+      name: gold_fact_customer_wishlist_product
+      job_clusters: *etl_cluster
+      tasks:
+        - task_key: run
+          job_cluster_key: etl
+          notebook_task:
+            notebook_path: ./notebooks/gold/gold_fact_customer_wishlist_product.py
+            base_parameters: *params
+
+    gold_customer_ltv:
+      name: gold_customer_ltv
+      job_clusters: *etl_cluster
+      tasks:
+        - task_key: run
+          job_cluster_key: etl
+          notebook_task:
+            notebook_path: ./notebooks/gold/gold_customer_ltv.py
+            base_parameters: *params

@@ -26,9 +26,7 @@ from pyspark.sql import DataFrame, SparkSession, Window
 from pyspark.sql import functions as F
 
 
-def dedup_by_key(
-    df: DataFrame, keys: Sequence[str], latest_ts_col: str
-) -> DataFrame:
+def dedup_by_key(df: DataFrame, keys: Sequence[str], latest_ts_col: str) -> DataFrame:
     """Keep one row per ``keys`` combination: the one with the largest
     ``latest_ts_col``. Tie-break is non-deterministic but stable within a
     single SparkSession on the same input."""
@@ -40,9 +38,7 @@ def dedup_by_key(
     )
 
 
-def apply_watermark(
-    df: DataFrame, ts_col: str, window_days: int
-) -> DataFrame:
+def apply_watermark(df: DataFrame, ts_col: str, window_days: int) -> DataFrame:
     """Drop rows whose ``ts_col`` is older than ``max(ts_col) - window_days``.
 
     Returns the DataFrame unchanged if it's empty (no high-water mark to
@@ -96,17 +92,10 @@ def append_quarantine(df: DataFrame, path: str) -> None:
     ``mergeSchema=true`` so adding a new DQ rule (and therefore a new
     possible value in ``_quarantine_reason``) doesn't fail the write.
     """
-    (
-        df.write.format("delta")
-        .mode("append")
-        .option("mergeSchema", "true")
-        .save(path)
-    )
+    (df.write.format("delta").mode("append").option("mergeSchema", "true").save(path))
 
 
-def ensure_silver_table(
-    spark: SparkSession, path: str, schema_df: DataFrame
-) -> None:
+def ensure_silver_table(spark: SparkSession, path: str, schema_df: DataFrame) -> None:
     """Create the silver Delta table at ``path`` if it doesn't exist.
 
     Uses ``schema_df.schema`` as the table schema. A no-op if the table

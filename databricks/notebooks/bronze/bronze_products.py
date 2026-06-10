@@ -1,12 +1,25 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Bronze — Currency Rates
+# MAGIC # Bronze — Products
 # MAGIC
-# MAGIC Auto Loader CSV ingest. Tiny volume (~10 rows/day) but follows the
-# MAGIC same pattern as every other source so the platform behaves uniformly.
-# MAGIC The `_source` column from the generator ('api' | 'simulated')
-# MAGIC propagates here so the validate_currency_freshness Airflow gate can
-# MAGIC check rate provenance.
+# MAGIC Auto Loader CSV ingest of `raw/products/year=.../products.csv` into
+# MAGIC the Bronze Delta table. The products generator writes CSV (per the
+# MAGIC Slice 2 spec — exercising a second file format through the same
+# MAGIC pipeline shape); Auto Loader infers column types from the header +
+# MAGIC data on first contact and persists them to the schema location.
+# MAGIC
+# MAGIC ## Contract
+# MAGIC
+# MAGIC - **Source**: `<bucket>/raw/products/` (daily snapshots, CSV with header)
+# MAGIC - **Sink**: `<bucket>/bronze/products/` (Delta, append-only)
+# MAGIC - **Schema evolution**: `addNewColumns`
+# MAGIC - **Lineage columns added**: `_ingestion_timestamp`, `_source_file`,
+# MAGIC   `_batch_id`
+# MAGIC - **Trigger**: `availableNow=True`; Airflow re-invokes per run
+# MAGIC
+# MAGIC Downstream, `silver_products` filters on `_batch_id`, applies
+# MAGIC PRODUCTS_RULES, and MERGEs current state per `product_id`;
+# MAGIC `gold_dim_product` materialises the SCD2 history.
 
 # COMMAND ----------
 
@@ -27,6 +40,7 @@ if not batch_id:
     from libs.batch import make_batch_id
 
     batch_id = make_batch_id()
+print(f"env={env} batch_id={batch_id}")
 
 # COMMAND ----------
 
@@ -36,14 +50,17 @@ from libs.paths import checkpoint_path, layer_root  # noqa: E402
 
 cfg = load_config(env=env)
 bucket = get_path(cfg, "storage.bucket")
-source_path = layer_root(bucket, cfg["paths"]["raw_prefix"], "currency_rates")
-target_path = layer_root(bucket, cfg["paths"]["bronze_prefix"], "currency_rates")
+source_path = layer_root(bucket, cfg["paths"]["raw_prefix"], "products")
+target_path = layer_root(bucket, cfg["paths"]["bronze_prefix"], "products")
 schema_location = checkpoint_path(
-    bucket, cfg["paths"]["checkpoint_prefix"], "currency_rates", "bronze_schema"
+    bucket, cfg["paths"]["checkpoint_prefix"], "products", "bronze_schema"
 )
 checkpoint_location = checkpoint_path(
-    bucket, cfg["paths"]["checkpoint_prefix"], "currency_rates", "bronze"
+    bucket, cfg["paths"]["checkpoint_prefix"], "products", "bronze"
 )
+
+print(f"source = {source_path}")
+print(f"target = {target_path}")
 
 # COMMAND ----------
 
@@ -67,9 +84,12 @@ query = (
 )
 query.awaitTermination()
 
+# COMMAND ----------
+
 import json  # noqa: E402
 
 rows_written = sum(p.numInputRows for p in query.recentProgress)
+print(f"rows_written={rows_written} batch_id={batch_id}")
 dbutils.notebook.exit(  # noqa: F821
     json.dumps({"batch_id": batch_id, "rows_written": rows_written})
 )

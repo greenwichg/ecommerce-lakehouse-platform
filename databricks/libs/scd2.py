@@ -56,9 +56,7 @@ IS_CURRENT = "is_current"
 _FAR_FUTURE_SQL = "CAST('9999-12-31 23:59:59' AS TIMESTAMP)"
 
 
-def compute_surrogate(
-    df: DataFrame, natural_key: str, ts_col: str, sk_col: str
-) -> DataFrame:
+def compute_surrogate(df: DataFrame, natural_key: str, ts_col: str, sk_col: str) -> DataFrame:
     """Attach the SCD2 surrogate key to ``df``.
 
     sk = sha256(natural_key || '|' || updated_at_iso). This couples the SK
@@ -146,14 +144,18 @@ def _stage_for_merge(
     # Source-only columns we need to carry to the INSERT side. Drop join's t.* duplicates.
     source_cols = [F.col(f"s.{c}") for c in source_with_sk.columns]
 
-    inserts_new = joined.where(is_new).select(*source_cols).withColumn(
-        "__merge_key", F.lit(None).cast(StringType())
+    inserts_new = (
+        joined.where(is_new)
+        .select(*source_cols)
+        .withColumn("__merge_key", F.lit(None).cast(StringType()))
     )
-    inserts_changed = joined.where(is_changed).select(*source_cols).withColumn(
-        "__merge_key", F.lit(None).cast(StringType())
+    inserts_changed = (
+        joined.where(is_changed)
+        .select(*source_cols)
+        .withColumn("__merge_key", F.lit(None).cast(StringType()))
     )
-    closes = joined.where(is_changed).select(*source_cols).withColumn(
-        "__merge_key", F.col(natural_key)
+    closes = (
+        joined.where(is_changed).select(*source_cols).withColumn("__merge_key", F.col(natural_key))
     )
 
     return inserts_new.unionByName(inserts_changed).unionByName(closes)

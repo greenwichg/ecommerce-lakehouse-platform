@@ -32,7 +32,9 @@ def test_airflow_runs_mock_returns_nonempty_dataframe() -> None:
     # Column contract — widget renderers depend on these
     assert {"dag_id", "run_id", "start_time", "state"} <= set(df.columns)
     # All three production DAGs represented
-    assert {"daily_batch_pipeline", "hourly_clickstream_pipeline", "weekly_maintenance"} <= set(df["dag_id"])
+    assert {"daily_batch_pipeline", "hourly_clickstream_pipeline", "weekly_maintenance"} <= set(
+        df["dag_id"]
+    )
 
 
 def test_airflow_runs_sorted_most_recent_first() -> None:
@@ -95,10 +97,17 @@ def test_live_config_partial_creds_treated_as_not_ready(monkeypatch: pytest.Monk
     """If only SOME Snowflake env vars are set, the ready check fails
     rather than crashing on a downstream connect call."""
     for var in (
-        "SNOWFLAKE_ACCOUNT", "SNOWFLAKE_USER", "SNOWFLAKE_PASSWORD",
-        "SNOWFLAKE_WAREHOUSE", "SNOWFLAKE_DATABASE",
-        "AWS_REGION", "AWS_DEFAULT_REGION", "SFN_STATE_MACHINE_ARN",
-        "AIRFLOW_BASE_URL", "AIRFLOW_USERNAME", "AIRFLOW_PASSWORD",
+        "SNOWFLAKE_ACCOUNT",
+        "SNOWFLAKE_USER",
+        "SNOWFLAKE_PASSWORD",
+        "SNOWFLAKE_WAREHOUSE",
+        "SNOWFLAKE_DATABASE",
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+        "SFN_STATE_MACHINE_ARN",
+        "AIRFLOW_BASE_URL",
+        "AIRFLOW_USERNAME",
+        "AIRFLOW_PASSWORD",
     ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("SNOWFLAKE_ACCOUNT", "xy12345")
@@ -114,8 +123,11 @@ def test_freshness_live_falls_back_to_mock_when_no_creds(monkeypatch: pytest.Mon
     """The dashboard must render even when live mode is requested but
     creds aren't set — graceful degradation, not a crash."""
     for var in (
-        "SNOWFLAKE_ACCOUNT", "SNOWFLAKE_USER", "SNOWFLAKE_PASSWORD",
-        "SNOWFLAKE_WAREHOUSE", "SNOWFLAKE_DATABASE",
+        "SNOWFLAKE_ACCOUNT",
+        "SNOWFLAKE_USER",
+        "SNOWFLAKE_PASSWORD",
+        "SNOWFLAKE_WAREHOUSE",
+        "SNOWFLAKE_DATABASE",
     ):
         monkeypatch.delenv(var, raising=False)
     df = data_module.freshness(mode="live")
@@ -140,7 +152,10 @@ def test_send_quarantine_decision_mock_returns_payload() -> None:
     """The mock path returns the payload that would have been sent, so
     a UI test can assert the button wires through correctly."""
     result = data_module.send_quarantine_decision(
-        "mock-token-1", "discard", operator="alice", mode="mock",
+        "mock-token-1",
+        "discard",
+        operator="alice",
+        mode="mock",
         extra={"reason": "test"},
     )
     assert result["mocked"] is True
@@ -150,14 +165,19 @@ def test_send_quarantine_decision_mock_returns_payload() -> None:
     assert result["payload"]["reason"] == "test"
 
 
-def test_send_quarantine_decision_live_without_creds_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_send_quarantine_decision_live_without_creds_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Don't silently fall back to mock when an operator clicks a live
     button — surface the misconfiguration as an error."""
     for var in ("AWS_REGION", "AWS_DEFAULT_REGION", "SFN_STATE_MACHINE_ARN"):
         monkeypatch.delenv(var, raising=False)
     with pytest.raises(RuntimeError, match="AWS env vars not set"):
         data_module.send_quarantine_decision(
-            "mock-token-1", "replay", operator="alice", mode="live",
+            "mock-token-1",
+            "replay",
+            operator="alice",
+            mode="live",
         )
 
 

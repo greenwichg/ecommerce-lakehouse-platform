@@ -10,10 +10,17 @@ Actions:
   entry to ``processed/_quarantine_audit/...`` for forensic trail.
 - ``move_to_raw``: copy quarantined object back into the raw/ prefix
   (re-validation runs separately, by S3 event firing on the new raw
-  object).
-- ``poll_for_fix``: check whether ``<fix_prefix>/<original_filename>``
-  exists in S3. Returns ``{"present": bool, "key": str | None}``.
-  Step Functions polls this on a Wait → Choice loop.
+  object). Used by the plain "replay" branch — the operator decided the
+  quarantine was a false positive, so the original bytes go back.
+- ``poll_for_fix``: check whether ``<parent>/_fixed/<original_filename>``
+  exists in S3. Returns ``{"present": bool, "key": str}`` — ``key`` is
+  the expected fix location either way, so the state machine can quote
+  the exact upload path in its operator notification. Step Functions
+  polls this on a Wait → Choice loop.
+- ``replay_fixed``: copy the operator-uploaded ``_fixed/`` file to the
+  ORIGINAL raw/ location, then delete both quarantine objects (the bad
+  original and the fix). Used by the "fix-and-replay" branch — replaying
+  the original bytes would just re-quarantine them.
 - ``trigger_airflow``: POST to the Airflow REST API to manually
   trigger ``daily_batch_pipeline`` for the affected logical_date.
   Looks up the Airflow connection details from Secrets Manager.
@@ -156,6 +163,44 @@ def poll_for_fix(quarantine_key: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# replay_fixed
+# ---------------------------------------------------------------------------
+
+
+def replay_fixed(quarantine_key: str, operator: str) -> dict:
+    """Copy the operator-uploaded fixed file to the original raw/ location.
+
+    The corrected file lives at ``<parent>/_fixed/<filename>`` (see
+    ``_fix_key``); it lands at the raw/ key the ORIGINAL file came from,
+    so the S3 → SQS → validator chain re-validates the corrected bytes.
+    Both quarantine objects — the superseded original and the fix copy —
+    are deleted afterwards so the quarantine prefix doesn't accumulate
+    resolved cases.
+    """
+    fix_key = _fix_key(quarantine_key)
+    raw_key = _raw_key(quarantine_key)
+    s3.copy_object(
+        Bucket=BUCKET,
+        Key=raw_key,
+        CopySource={"Bucket": BUCKET, "Key": fix_key},
+    )
+    s3.delete_object(Bucket=BUCKET, Key=fix_key)
+    s3.delete_object(Bucket=BUCKET, Key=quarantine_key)
+    _audit_log_entry(
+        BUCKET,
+        {
+            "action": "replay_fixed",
+            "moved_at": datetime.now(UTC).isoformat(),
+            "from": fix_key,
+            "to": raw_key,
+            "superseded": quarantine_key,
+            "operator": operator,
+        },
+    )
+    return {"moved": True, "from": fix_key, "to": raw_key, "superseded": quarantine_key}
+
+
+# ---------------------------------------------------------------------------
 # trigger_airflow
 # ---------------------------------------------------------------------------
 
@@ -225,6 +270,10 @@ _ACTIONS = {
     ),
     "poll_for_fix": lambda event: poll_for_fix(
         quarantine_key=event["quarantine_key"],
+    ),
+    "replay_fixed": lambda event: replay_fixed(
+        quarantine_key=event["quarantine_key"],
+        operator=event.get("operator", "unknown"),
     ),
     "trigger_airflow": lambda event: trigger_airflow(
         dag_id=event["dag_id"],

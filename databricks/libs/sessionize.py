@@ -71,9 +71,7 @@ def sessionize_events(
         .withColumn(
             "silver_session_key",
             F.sha2(
-                F.concat_ws(
-                    "|", F.col(raw_session_id_col), F.col("session_seq").cast("string")
-                ),
+                F.concat_ws("|", F.col(raw_session_id_col), F.col("session_seq").cast("string")),
                 256,
             ),
         )

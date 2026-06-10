@@ -758,7 +758,7 @@ cfebfd9 docs(architecture+runbook): Slice 6 sections + correct test count
 
 ## Project complete — final summary
 
-**7 slices, ~140 files, 313 passing tests, 5 top-level docs + per-module READMEs.**
+**7 slices, ~140 files, 324 passing tests, 5 top-level docs + per-module READMEs.**
 
 | Slice | Headline | Tests added |
 |---|---|---|
@@ -769,6 +769,47 @@ cfebfd9 docs(architecture+runbook): Slice 6 sections + correct test count
 | 4 | Currency + customer_ltv + wishlist factless fact + MV | ~70 |
 | 5 | Terraform + Lambda validator + Step Functions quarantine + cost monitors | +42 |
 | 6 | Streamlit + CI/CD + docs + demo scenario | +33 |
+| — | Post-completion hardening pass (see below) | +11 |
+
+### Post-completion hardening pass
+
+A full-platform review + test sweep after Slice 6 found and fixed:
+
+1. **DQ NULL semantics** (`libs/quality.py`): `split_quarantine` used
+   `NOT (condition)`, so a NULL-evaluating condition (e.g. NULL
+   `quantity` vs `quantity > 0`) passed as good under SQL three-valued
+   logic. Now `NOT COALESCE((condition), FALSE)` — valid iff TRUE,
+   matching the documented contract and the explicit `X IS NULL OR ...`
+   guards in the rule sets.
+2. **Generator history rewrites** (`generators/{customers,products}.py`):
+   the SCD2 version chain was sampled over (signup, generation_date], so
+   consecutive daily snapshots could disagree about an entity's history
+   (different email at the same `updated_at`). Chains are now sampled
+   over the fixed horizon and only *queried* per date.
+3. **Fix-and-replay branch** (Step Functions + quarantine helper): the
+   operator notification quoted a wrong `_fixed/` upload path, and the
+   branch replayed the ORIGINAL quarantined bytes (instant
+   re-quarantine) instead of the fix. New `replay_fixed` helper action
+   promotes the corrected upload to the original raw/ key and cleans up
+   both quarantine objects; the notification now quotes the exact key
+   the poller checks.
+4. **Validator partial-batch responses** (`lambda/file_validator`): the
+   SQS event source mapping declares `ReportBatchItemFailures` but the
+   handler never returned `batchItemFailures` — one bad record re-drove
+   whole batches into the DLQ. Now per-message failure isolation.
+5. **Missing Bronze notebooks**: `bronze_customers.py` and
+   `bronze_products.py` (referenced by the daily DAG's job variables,
+   read by the silver notebooks) didn't exist. Added.
+6. **Snowpipe task wedge** (`50_snowpipe_streams_tasks.sql`): a session
+   re-emitted across two gold batches in one stream window made the
+   MERGE nondeterministic (task fails forever). Added QUALIFY dedup.
+7. **black exclusion bug** (`pyproject.toml`): unanchored `data` regex
+   silently excluded the whole `databricks/` tree from formatting; 27
+   files reformatted under the corrected anchor.
+8. **deploy.yml ↔ bundle gap**: the workflow referenced
+   `databricks/bundle.yml` + `databricks/README.md` which didn't exist;
+   added the Asset Bundle (20 jobs matching the Airflow
+   `databricks_job_*` variables) and pointed the job at the bundle root.
 
 ### What this project demonstrates
 

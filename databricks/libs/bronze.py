@@ -54,9 +54,7 @@ def add_bronze_metadata(
         ``_batch_id`` appended.
     """
     source_expr = (
-        F.col(source_file_col)
-        if source_file_col is not None
-        else F.lit(None).cast(StringType())
+        F.col(source_file_col) if source_file_col is not None else F.lit(None).cast(StringType())
     )
     ts_expr: Any
     if ingestion_timestamp is None:

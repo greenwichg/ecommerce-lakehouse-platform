@@ -58,6 +58,4 @@ optimize_zorder(spark, gold_path, ["product_id"])  # noqa: F821
 
 import json  # noqa: E402
 
-dbutils.notebook.exit(  # noqa: F821
-    json.dumps({"batch_id": batch_id, "row_count": row_count})
-)
+dbutils.notebook.exit(json.dumps({"batch_id": batch_id, "row_count": row_count}))  # noqa: F821

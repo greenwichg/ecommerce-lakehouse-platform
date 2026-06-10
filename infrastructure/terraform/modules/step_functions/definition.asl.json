@@ -52,7 +52,7 @@
         {
           "Variable": "$.decision.decision",
           "StringEquals": "fix-and-replay",
-          "Next": "NotifyFixPath"
+          "Next": "ComputeFixPath"
         }
       ],
       "Default": "OperatorDecisionInvalid"
@@ -153,13 +153,34 @@
       },
       "End": true
     },
+    "ComputeFixPath": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${helper_function_arn}",
+        "Payload": {
+          "action": "poll_for_fix",
+          "quarantine_key.$": "$.quarantine_key"
+        }
+      },
+      "ResultPath": "$.poll",
+      "Next": "NotifyFixPath",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ]
+    },
     "NotifyFixPath": {
       "Type": "Task",
       "Resource": "arn:aws:states:::sns:publish",
       "Parameters": {
         "TopicArn": "${alerts_topic_arn}",
         "Subject": "[lakehouse] Awaiting fixed file upload",
-        "Message.$": "States.Format('Upload corrected file to: s3://${bucket_id}/{}/_fixed/<filename>. State machine will resume when the fixed file appears.', $.quarantine_key)"
+        "Message.$": "States.Format('Upload corrected file to: s3://${bucket_id}/{}. State machine will resume when the fixed file appears.', $.poll.Payload.key)"
       },
       "ResultPath": "$.fix_notification",
       "Next": "WaitForFixedFile"
@@ -188,10 +209,32 @@
         {
           "Variable": "$.poll.Payload.present",
           "BooleanEquals": true,
-          "Next": "MoveBackToRaw"
+          "Next": "ReplayFixedFile"
         }
       ],
       "Default": "WaitForFixedFile"
+    },
+    "ReplayFixedFile": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${helper_function_arn}",
+        "Payload": {
+          "action": "replay_fixed",
+          "quarantine_key.$": "$.quarantine_key",
+          "operator.$": "$.decision.operator"
+        }
+      },
+      "ResultPath": "$.move",
+      "Next": "TriggerAirflowDAG",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ]
     },
     "OperatorTimedOut": {
       "Type": "Task",

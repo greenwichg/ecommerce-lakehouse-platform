@@ -62,9 +62,7 @@ silver_orders_path = layer_root(bucket, cfg["paths"]["silver_prefix"], "orders")
 dim_customer_path = layer_root(bucket, cfg["paths"]["gold_prefix"], "dim_customer")
 dim_product_path = layer_root(bucket, cfg["paths"]["gold_prefix"], "dim_product")
 fact_orders_path = layer_root(bucket, cfg["paths"]["gold_prefix"], "fact_orders")
-orphan_threshold = float(
-    get_path(cfg, "data_quality.orphan_surrogate_rate_pct", default=1.0)
-)
+orphan_threshold = float(get_path(cfg, "data_quality.orphan_surrogate_rate_pct", default=1.0))
 
 print(f"silver_orders = {silver_orders_path}")
 print(f"dim_customer  = {dim_customer_path}")

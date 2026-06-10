@@ -39,6 +39,7 @@ class LiveConfig:
     Pulled from environment variables, not asked of the user at runtime,
     so the same dashboard can be redeployed without code changes.
     """
+
     snowflake_account: str | None
     snowflake_user: str | None
     snowflake_password: str | None
@@ -67,10 +68,15 @@ class LiveConfig:
 
     @property
     def snowflake_ready(self) -> bool:
-        return all([
-            self.snowflake_account, self.snowflake_user, self.snowflake_password,
-            self.snowflake_warehouse, self.snowflake_database,
-        ])
+        return all(
+            [
+                self.snowflake_account,
+                self.snowflake_user,
+                self.snowflake_password,
+                self.snowflake_warehouse,
+                self.snowflake_database,
+            ]
+        )
 
     @property
     def aws_ready(self) -> bool:
@@ -92,6 +98,7 @@ def _load_parquet(name: str) -> pd.DataFrame:
         # Reasonable error: the mock files are checked in, but if someone
         # ran ``rm -rf data/`` we can regenerate them rather than crash.
         from data.mock.generate import regenerate
+
         regenerate(_MOCK_DIR)
     return pd.read_parquet(path)
 
@@ -100,6 +107,7 @@ def _load_json(name: str) -> list[dict]:
     path = _MOCK_DIR / name
     if not path.exists():
         from data.mock.generate import regenerate
+
         regenerate(_MOCK_DIR)
     return json.loads(path.read_text())
 
@@ -210,16 +218,23 @@ def _airflow_runs_live(cfg: LiveConfig) -> pd.DataFrame:
         resp = requests.get(url, auth=auth, timeout=10)
         resp.raise_for_status()
         for r in resp.json().get("dag_runs", []):
-            rows.append({
-                "dag_id": dag_id,
-                "run_id": r["dag_run_id"],
-                "start_time": pd.to_datetime(r["start_date"]),
-                "end_time": pd.to_datetime(r["end_date"]) if r.get("end_date") else None,
-                "duration_s": (pd.to_datetime(r["end_date"]) - pd.to_datetime(r["start_date"])).total_seconds()
-                              if r.get("end_date") else None,
-                "state": r["state"],
-                "rows_processed": None,  # filled from XCom in a future iteration
-            })
+            rows.append(
+                {
+                    "dag_id": dag_id,
+                    "run_id": r["dag_run_id"],
+                    "start_time": pd.to_datetime(r["start_date"]),
+                    "end_time": pd.to_datetime(r["end_date"]) if r.get("end_date") else None,
+                    "duration_s": (
+                        (
+                            pd.to_datetime(r["end_date"]) - pd.to_datetime(r["start_date"])
+                        ).total_seconds()
+                        if r.get("end_date")
+                        else None
+                    ),
+                    "state": r["state"],
+                    "rows_processed": None,  # filled from XCom in a future iteration
+                }
+            )
     return pd.DataFrame(rows).sort_values("start_time", ascending=False).reset_index(drop=True)
 
 
@@ -240,8 +255,10 @@ def _freshness_live(cfg: LiveConfig) -> pd.DataFrame:
         ("analytics.customer_ltv", 24),
     ]
     conn = snowflake.connector.connect(
-        account=cfg.snowflake_account, user=cfg.snowflake_user,
-        password=cfg.snowflake_password, warehouse=cfg.snowflake_warehouse,
+        account=cfg.snowflake_account,
+        user=cfg.snowflake_user,
+        password=cfg.snowflake_password,
+        warehouse=cfg.snowflake_warehouse,
         database=cfg.snowflake_database,
     )
     rows = []
@@ -256,10 +273,15 @@ def _freshness_live(cfg: LiveConfig) -> pd.DataFrame:
             row = cur.fetchone()
             last_loaded, age_h = row[0], float(row[1] or 0)
             status = "fresh" if age_h < sla_h * 0.5 else "warn" if age_h < sla_h else "stale"
-            rows.append({
-                "table": table, "last_loaded_at": last_loaded,
-                "age_hours": age_h, "sla_hours": sla_h, "status": status,
-            })
+            rows.append(
+                {
+                    "table": table,
+                    "last_loaded_at": last_loaded,
+                    "age_hours": age_h,
+                    "sla_hours": sla_h,
+                    "status": status,
+                }
+            )
     finally:
         conn.close()
     return pd.DataFrame(rows)
@@ -272,8 +294,10 @@ def _cost_live(cfg: LiveConfig) -> pd.DataFrame:
     import snowflake.connector
 
     conn = snowflake.connector.connect(
-        account=cfg.snowflake_account, user=cfg.snowflake_user,
-        password=cfg.snowflake_password, warehouse=cfg.snowflake_warehouse,
+        account=cfg.snowflake_account,
+        user=cfg.snowflake_user,
+        password=cfg.snowflake_password,
+        warehouse=cfg.snowflake_warehouse,
         database=cfg.snowflake_database,
     )
     # Per-DAG attribution requires query_tag conventions on the Snowflake
@@ -296,10 +320,14 @@ def _cost_live(cfg: LiveConfig) -> pd.DataFrame:
         cur = conn.cursor()
         cur.execute(query)
         for r in cur.fetchall():
-            rows.append({
-                "run_date": r[0], "dag_id": r[1],
-                "compute_kind": r[2], "credits_or_dbus": float(r[3] or 0),
-            })
+            rows.append(
+                {
+                    "run_date": r[0],
+                    "dag_id": r[1],
+                    "compute_kind": r[2],
+                    "credits_or_dbus": float(r[3] or 0),
+                }
+            )
     finally:
         conn.close()
     # Databricks DBUs aren't queryable from Snowflake — would come from
@@ -318,23 +346,30 @@ def _quarantine_queue_live(cfg: LiveConfig) -> list[dict]:
     client = boto3.client("stepfunctions", region_name=cfg.aws_region)
     paginator = client.get_paginator("list_executions")
     queue = []
-    for page in paginator.paginate(stateMachineArn=cfg.sfn_state_machine_arn, statusFilter="RUNNING"):
+    for page in paginator.paginate(
+        stateMachineArn=cfg.sfn_state_machine_arn, statusFilter="RUNNING"
+    ):
         for ex in page.get("executions", []):
             detail = client.describe_execution(executionArn=ex["executionArn"])
             input_obj = json.loads(detail.get("input", "{}"))
             started = detail["startDate"]
-            queue.append({
-                "execution_name": ex["name"],
-                "started_at": started.isoformat(),
-                "age_hours": (pd.Timestamp.now(tz="UTC") - pd.Timestamp(started)).total_seconds() / 3600,
-                "quarantine_key": input_obj.get("quarantine_key", "(unknown)"),
-                "source": input_obj.get("source", "(unknown)"),
-                "reason": input_obj.get("reason", "(unknown)"),
-                # Task tokens come from inside the WaitForOperatorDecision
-                # state; getActivityTask retrieves them. Real implementation
-                # tracks tokens in a sidecar table keyed by execution name.
-                "task_token": input_obj.get("_task_token", "(retrieve from activity poller)"),
-            })
+            queue.append(
+                {
+                    "execution_name": ex["name"],
+                    "started_at": started.isoformat(),
+                    "age_hours": (
+                        pd.Timestamp.now(tz="UTC") - pd.Timestamp(started)
+                    ).total_seconds()
+                    / 3600,
+                    "quarantine_key": input_obj.get("quarantine_key", "(unknown)"),
+                    "source": input_obj.get("source", "(unknown)"),
+                    "reason": input_obj.get("reason", "(unknown)"),
+                    # Task tokens come from inside the WaitForOperatorDecision
+                    # state; getActivityTask retrieves them. Real implementation
+                    # tracks tokens in a sidecar table keyed by execution name.
+                    "task_token": input_obj.get("_task_token", "(retrieve from activity poller)"),
+                }
+            )
     return queue
 
 
@@ -345,8 +380,10 @@ def _currency_fallback_live(cfg: LiveConfig) -> pd.DataFrame:
     import snowflake.connector
 
     conn = snowflake.connector.connect(
-        account=cfg.snowflake_account, user=cfg.snowflake_user,
-        password=cfg.snowflake_password, warehouse=cfg.snowflake_warehouse,
+        account=cfg.snowflake_account,
+        user=cfg.snowflake_user,
+        password=cfg.snowflake_password,
+        warehouse=cfg.snowflake_warehouse,
         database=cfg.snowflake_database,
     )
     query = """

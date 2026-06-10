@@ -49,9 +49,7 @@ src_stream = (
     .options(**autoloader_options(schema_location=schema_location, file_format="json"))
     .load(source_path)
 )
-enriched = add_bronze_metadata(
-    src_stream, batch_id=batch_id, source_file_col="_metadata.file_path"
-)
+enriched = add_bronze_metadata(src_stream, batch_id=batch_id, source_file_col="_metadata.file_path")
 
 query = (
     enriched.writeStream.format("delta")

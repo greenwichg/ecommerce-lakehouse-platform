@@ -75,10 +75,14 @@ ignore = [
 [tool.black]
 line-length = 100
 target-version = ["py311"]
+# Black matches this regex against paths relative to the project root with
+# a leading slash. The pattern must be anchored: a bare `data` is a
+# substring match that silently excluded the whole databricks/ tree (and
+# streamlit_app/data.py) from formatting.
 extend-exclude = '''
 (
-    data
-  | infrastructure/terraform/\.terraform
+    ^/data/
+  | ^/infrastructure/terraform/\.terraform/
 )
 '''
 

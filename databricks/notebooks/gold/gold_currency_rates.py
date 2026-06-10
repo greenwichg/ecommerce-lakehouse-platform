@@ -40,6 +40,4 @@ silver.write.format("delta").mode("overwrite").option("overwriteSchema", "true")
 
 import json  # noqa: E402
 
-dbutils.notebook.exit(  # noqa: F821
-    json.dumps({"batch_id": batch_id, "row_count": silver.count()})
-)
+dbutils.notebook.exit(json.dumps({"batch_id": batch_id, "row_count": silver.count()}))  # noqa: F821
