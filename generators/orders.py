@@ -39,6 +39,7 @@ import datetime as dt
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import click
@@ -60,6 +61,8 @@ from generators._common import (  # noqa: E402
     seeded_rng,
     write_parquet,
 )
+from generators.customers import signup_date_for  # noqa: E402
+from generators.products import introduction_date_for  # noqa: E402
 
 STATUS_PLACED = "placed"
 STATUS_PAID = "paid"
@@ -110,6 +113,30 @@ def _product_pool_id(seed: int, index: int) -> str:
     return f"PRD-{seed:04d}-{index:05d}"
 
 
+@lru_cache(maxsize=256)
+def _eligible_customer_indices(seed: int, customer_count: int, as_of: dt.date) -> tuple[int, ...]:
+    """Customer indices whose signup date is on or before ``as_of``.
+
+    Orders must only reference customers who exist at placement time —
+    otherwise the gold PIT join against dim_customer yields NULL
+    surrogates and the 1% orphan-rate gate fails on every run (signups
+    spread over a 2-year horizon mean ~30%+ of uniform draws would be
+    not-yet-signed-up customers).
+
+    Falls back to the full pool if nobody has signed up by ``as_of``
+    (degenerate config: generating before the project epoch).
+    """
+    eligible = tuple(i for i in range(customer_count) if signup_date_for(seed, i) <= as_of)
+    return eligible or tuple(range(customer_count))
+
+
+@lru_cache(maxsize=256)
+def _eligible_product_indices(seed: int, product_count: int, as_of: dt.date) -> tuple[int, ...]:
+    """Product indices introduced on or before ``as_of`` (see above)."""
+    eligible = tuple(i for i in range(product_count) if introduction_date_for(seed, i) <= as_of)
+    return eligible or tuple(range(product_count))
+
+
 def _build_order_spec(
     placed_date: dt.date,
     placement_index: int,
@@ -122,8 +149,12 @@ def _build_order_spec(
     order_id = str(deterministic_uuid(f"orders:{seed}", placed_date.isoformat(), placement_index))
     rng = seeded_rng("trajectory", order_id)
 
-    customer_id = _customer_pool_id(seed, rng.randint(0, customer_count - 1))
-    product_id = _product_pool_id(seed, rng.randint(0, product_count - 1))
+    # Sample FKs from the entities that exist at placement time so the
+    # downstream PIT joins resolve (see _eligible_customer_indices).
+    customers_alive = _eligible_customer_indices(seed, customer_count, placed_date)
+    products_alive = _eligible_product_indices(seed, product_count, placed_date)
+    customer_id = _customer_pool_id(seed, customers_alive[rng.randint(0, len(customers_alive) - 1)])
+    product_id = _product_pool_id(seed, products_alive[rng.randint(0, len(products_alive) - 1)])
     quantity = max(1, int(rng.gammavariate(2.0, cfg["avg_items_per_order"] / 2.0)))
     price = round(rng.uniform(cfg["price_min"], cfg["price_max"]), 2)
 

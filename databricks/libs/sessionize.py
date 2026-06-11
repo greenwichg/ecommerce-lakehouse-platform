@@ -8,10 +8,22 @@ Two transforms live here:
    sessions over time, separated by >30 minutes of inactivity. The
    ``silver_session_key`` is the post-sessionization key:
 
-       silver_session_key = sha256(raw_session_id || '|' || session_seq)
+       silver_session_key = sha256(raw_session_id || '|' || island_start_epoch)
 
-   where ``session_seq`` is the cumulative count of "new session"
-   boundaries (gap > threshold OR first event for the cookie).
+   where ``island_start_epoch`` is the epoch-seconds timestamp of the
+   island's FIRST event. Keying on the island start — not the
+   batch-local ``session_seq`` ordinal — is what makes keys stable
+   across batches: each hourly batch is sessionized in isolation, so a
+   cookie's first visit in *every* batch gets seq=1; seq-derived keys
+   would collide across batches and fact_sessions would glue distinct
+   real sessions into one bogus row. ``session_seq`` is still emitted
+   as a batch-relative ordinal for inspection, but it is not part of
+   the key.
+
+   Known trade-off: a session straddling a batch boundary is emitted as
+   two rows (the tail's island start differs). Bounded by batch cadence
+   (hourly) vs. the 30-minute gap, and detectable downstream (adjacent
+   sessions of one cookie closer than the gap threshold).
 
 2. ``build_fact_sessions`` aggregates sessionized events into one row
    per session: session_start, session_end, event_count, attributed
@@ -45,9 +57,12 @@ def sessionize_events(
     flag to assign an ascending sequence number per cookie.
 
     Returns ``events`` with two new columns:
-      - ``session_seq`` (int): 1, 2, 3, ... per cookie
+      - ``session_seq`` (int): 1, 2, 3, ... per cookie, batch-relative
       - ``silver_session_key`` (string): SHA-256 hex of
-        ``raw_session_id || '|' || session_seq``
+        ``raw_session_id || '|' || island_start_epoch_seconds`` — derived
+        from the island's first event timestamp, NOT from ``session_seq``,
+        so the key is stable no matter which batch (or how much of the
+        cookie's history) the sessionizer saw (see module docstring).
     """
     window_per_cookie = Window.partitionBy(raw_session_id_col).orderBy(event_ts_col)
 
@@ -69,13 +84,23 @@ def sessionize_events(
             F.sum(F.col("__is_new_session").cast("int")).over(window_per_cookie),
         )
         .withColumn(
+            "__island_start_epoch",
+            F.min(F.col(event_ts_col).cast("long")).over(
+                Window.partitionBy(raw_session_id_col, "session_seq")
+            ),
+        )
+        .withColumn(
             "silver_session_key",
             F.sha2(
-                F.concat_ws("|", F.col(raw_session_id_col), F.col("session_seq").cast("string")),
+                F.concat_ws(
+                    "|",
+                    F.col(raw_session_id_col),
+                    F.col("__island_start_epoch").cast("string"),
+                ),
                 256,
             ),
         )
-        .drop("__prev_ts", "__gap_minutes", "__is_new_session")
+        .drop("__prev_ts", "__gap_minutes", "__is_new_session", "__island_start_epoch")
     )
 
 

@@ -18,9 +18,11 @@ the Silver sessionizer's gap-and-island will recover (Silver sub-divides
 the cookie into ``silver_session_key`` values; the generator's
 ``session_id`` is the cookie identity, not the post-sessionization key).
 
-Roughly 30% of events have ``customer_id = NULL`` (anonymous browsers).
-The other 70% reference a customer from the same pool as the customers
-generator (so FK joins resolve when both sources are loaded).
+Roughly 30% of cookies are anonymous (``customer_id = NULL`` on every
+event). The rest are bound to a customer from the same pool as the
+customers generator — but a bound cookie's visits are only *attributed*
+once the customer has signed up (pre-signup visits emit NULL), so the
+fact_sessions → dim_customer PIT join always resolves.
 
 Funnel: each visit starts with page_views; some add_to_cart, some
 checkout, some purchase. Purchase implies prior checkout and add_to_cart.
@@ -55,6 +57,7 @@ from libs.config import get_path, load_config  # noqa: E402
 from libs.paths import partition_path  # noqa: E402
 
 from generators._common import deterministic_uuid, seeded_rng  # noqa: E402
+from generators.customers import signup_date_for  # noqa: E402
 
 PROJECT_EPOCH = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _SESSION_HORIZON_HOURS = 730 * 24  # ~2y of session activity
@@ -139,13 +142,21 @@ def _build_visits_for_session(
 
     # Anonymity is stable per cookie: a cookie is either logged in or not
     # for its entire lifetime. (Real world has cookie-shared-with-account
-    # nuances; we don't model that here.)
+    # nuances; we don't model that here.) For logged-in cookies, visits
+    # that START before the bound customer's signup date are emitted as
+    # anonymous — the person hadn't created the account yet, and the
+    # Snowflake PIT join (fact_sessions → dim_customer) would otherwise
+    # orphan those sessions past the 1% gate.
     is_anonymous = rng.random() < _ANONYMOUS_RATE
     customer_id: str | None
+    customer_signup: dt.date | None
     if is_anonymous:
         customer_id = None
+        customer_signup = None
     else:
-        customer_id = _customer_pool_id(seed, rng.randint(0, customer_pool_size - 1))
+        customer_index = rng.randint(0, customer_pool_size - 1)
+        customer_id = _customer_pool_id(seed, customer_index)
+        customer_signup = signup_date_for(seed, customer_index)
 
     # Stable device + user agent per cookie.
     device = rng.choice(_DEVICES)
@@ -166,6 +177,12 @@ def _build_visits_for_session(
     events: list[_Event] = []
     for visit_idx, hour_offset in enumerate(first_offset_hours):
         visit_start = PROJECT_EPOCH + dt.timedelta(hours=hour_offset, minutes=rng.randint(0, 59))
+        # Pre-signup visits are anonymous (see note above).
+        visit_customer_id = (
+            customer_id
+            if customer_signup is not None and customer_signup <= visit_start.date()
+            else None
+        )
         # Stage 1: 1–8 page_views, 30s–5min apart
         n_pv = max(1, int(rng.gammavariate(2.0, 2.0)))
         n_pv = min(n_pv, 8)
@@ -177,7 +194,7 @@ def _build_visits_for_session(
                         deterministic_uuid("event", seed, session_index, visit_idx, "pv", pv)
                     ),
                     session_id=raw_session_id,
-                    customer_id=customer_id,
+                    customer_id=visit_customer_id,
                     event_type="page_view",
                     page_url=rng.choice(_PAGE_URLS),
                     event_ts=cursor,
@@ -196,7 +213,7 @@ def _build_visits_for_session(
                         deterministic_uuid("event", seed, session_index, visit_idx, "atc")
                     ),
                     session_id=raw_session_id,
-                    customer_id=customer_id,
+                    customer_id=visit_customer_id,
                     event_type="add_to_cart",
                     page_url="/cart",
                     event_ts=cursor,
@@ -213,7 +230,7 @@ def _build_visits_for_session(
                             deterministic_uuid("event", seed, session_index, visit_idx, "co")
                         ),
                         session_id=raw_session_id,
-                        customer_id=customer_id,
+                        customer_id=visit_customer_id,
                         event_type="checkout",
                         page_url="/checkout",
                         event_ts=cursor,
@@ -230,7 +247,7 @@ def _build_visits_for_session(
                                 deterministic_uuid("event", seed, session_index, visit_idx, "p")
                             ),
                             session_id=raw_session_id,
-                            customer_id=customer_id,
+                            customer_id=visit_customer_id,
                             event_type="purchase",
                             page_url="/orders/confirm",
                             event_ts=cursor,

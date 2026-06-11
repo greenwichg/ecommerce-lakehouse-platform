@@ -27,6 +27,7 @@ from generators.customers import (
     _customer_id,
     generate_for_date,
     run,
+    signup_date_for,
 )
 
 
@@ -126,6 +127,16 @@ def test_updated_at_reflects_latest_version_effective_from(customers_test_cfg: d
                 assert current is not None
                 assert row["updated_at"] == current.effective_from
                 break
+
+
+def test_signup_date_for_matches_timeline(customers_test_cfg: dict) -> None:
+    """The lightweight signup helper must stay RNG-aligned with
+    _build_timeline — event generators rely on it for FK temporal
+    eligibility (PIT-join orphan prevention)."""
+    cfg = customers_test_cfg["generators"]["customers"]
+    for index in range(100):
+        versions = _build_timeline(index, 42, cfg, dt.date(2099, 1, 1))
+        assert signup_date_for(42, index) == versions[0].effective_from.date()
 
 
 def test_history_is_stable_across_generation_dates(customers_test_cfg: dict) -> None:

@@ -2,11 +2,22 @@
 # MAGIC %md
 # MAGIC # Silver — Customers
 # MAGIC
-# MAGIC Same shape as silver_orders: bronze (filtered by current _batch_id)
-# MAGIC -> split_quarantine -> watermark -> dedup -> MERGE into silver Delta.
-# MAGIC The natural key here is ``customer_id``; the SCD2 trigger fields
-# MAGIC (email, address) are NOT the dedup key — Silver keeps "current state
-# MAGIC per customer_id", and Gold's apply_scd2_merge materialises history.
+# MAGIC Same shape as silver_orders MINUS the late-arrival watermark:
+# MAGIC bronze (filtered by current _batch_id) -> split_quarantine -> dedup
+# MAGIC -> MERGE into silver Delta. The natural key here is ``customer_id``;
+# MAGIC the SCD2 trigger fields (email, address) are NOT the dedup key —
+# MAGIC Silver keeps "current state per customer_id", and Gold's
+# MAGIC apply_scd2_merge materialises history.
+# MAGIC
+# MAGIC ## Why NO watermark on dimension snapshots
+# MAGIC
+# MAGIC The watermark drops rows whose ``updated_at`` is older than
+# MAGIC ``max(updated_at) - N days`` — correct for an *event stream* (orders),
+# MAGIC where ``updated_at`` tracks arrival recency. A customer snapshot row's
+# MAGIC ``updated_at`` is the customer's LAST CHANGE time: for a long-stable
+# MAGIC customer that is months old, so watermarking a snapshot silently drops
+# MAGIC most of the customer base (nothing reaches quarantine either) and the
+# MAGIC gold PIT joins orphan every order those customers place.
 
 # COMMAND ----------
 
@@ -32,7 +43,6 @@ from libs.paths import layer_root  # noqa: E402
 from libs.quality import CUSTOMERS_RULES, split_quarantine  # noqa: E402
 from libs.silver import (  # noqa: E402
     append_quarantine,
-    apply_watermark,
     dedup_by_key,
     ensure_silver_table,
     merge_into_silver,
@@ -43,7 +53,6 @@ bucket = get_path(cfg, "storage.bucket")
 bronze_path = layer_root(bucket, cfg["paths"]["bronze_prefix"], "customers")
 silver_path = layer_root(bucket, cfg["paths"]["silver_prefix"], "customers")
 quarantine_path = layer_root(bucket, cfg["paths"]["quarantine_prefix"], "customers")
-watermark_days = int(get_path(cfg, "data_quality.late_arrival_window_days", default=10))
 
 # COMMAND ----------
 
@@ -66,10 +75,9 @@ if bad_count > 0:
 
 # COMMAND ----------
 
-watermarked = apply_watermark(good, "updated_at", window_days=watermark_days)
-deduped = dedup_by_key(watermarked, ["customer_id"], "updated_at")
+deduped = dedup_by_key(good, ["customer_id"], "updated_at")
 merge_count = deduped.count()
-print(f"after watermark + dedup: {merge_count}")
+print(f"after dedup: {merge_count}")
 
 # COMMAND ----------
 

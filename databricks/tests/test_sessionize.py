@@ -140,7 +140,7 @@ def test_gap_exactly_at_threshold_does_not_break_session(spark: SparkSession) ->
 
 
 def test_session_key_deterministic_across_runs(spark: SparkSession) -> None:
-    """silver_session_key = sha256(raw_session_id || '|' || session_seq).
+    """silver_session_key = sha256(raw_session_id || '|' || island_start_epoch).
     Two sessionizations on the same input must yield the same keys."""
     rows = [
         ("e1", "cookie-A", "c1", "page_view", "/", dt.datetime(2025, 5, 1, 10, 0), "desktop", "ua"),
@@ -150,6 +150,60 @@ def test_session_key_deterministic_across_runs(spark: SparkSession) -> None:
     keys_a = sorted(r["silver_session_key"] for r in sessionize_events(df).collect())
     keys_b = sorted(r["silver_session_key"] for r in sessionize_events(df).collect())
     assert keys_a == keys_b
+
+
+def test_session_key_stable_across_batches(spark: SparkSession) -> None:
+    """The cross-batch contract: a visit's key must be the same whether the
+    sessionizer saw it alone (one hourly batch) or together with the
+    cookie's earlier history.
+
+    Regression: the key used to derive from the batch-relative
+    ``session_seq``, so a cookie's first visit in EVERY batch hashed to
+    the same key — distinct real sessions collided and fact_sessions
+    glued them into one row spanning hours or days.
+    """
+    visit_1 = [
+        ("e1", "cookie-A", "c1", "page_view", "/", dt.datetime(2025, 5, 1, 10, 0), "desktop", "ua"),
+        (
+            "e2",
+            "cookie-A",
+            "c1",
+            "page_view",
+            "/p",
+            dt.datetime(2025, 5, 1, 10, 5),
+            "desktop",
+            "ua",
+        ),
+    ]
+    visit_2 = [
+        ("e3", "cookie-A", "c1", "page_view", "/", dt.datetime(2025, 5, 1, 14, 0), "desktop", "ua"),
+        (
+            "e4",
+            "cookie-A",
+            "c1",
+            "add_to_cart",
+            "/cart",
+            dt.datetime(2025, 5, 1, 14, 3),
+            "desktop",
+            "ua",
+        ),
+    ]
+    # Batch 1 sees only visit 1; batch 2 sees only visit 2 (hourly cadence).
+    keys_batch_1 = {
+        r["silver_session_key"] for r in sessionize_events(_events(spark, visit_1)).collect()
+    }
+    keys_batch_2 = {
+        r["silver_session_key"] for r in sessionize_events(_events(spark, visit_2)).collect()
+    }
+    assert len(keys_batch_1) == 1 and len(keys_batch_2) == 1
+    # Different sessions → different keys even though each was seq=1 in its own batch.
+    assert keys_batch_1 != keys_batch_2, "cross-batch session-key collision"
+
+    # And a combined run agrees with the per-batch keys (so re-processing
+    # history together with new data never re-keys existing sessions).
+    combined = sessionize_events(_events(spark, visit_1 + visit_2)).collect()
+    combined_keys = {r["silver_session_key"] for r in combined}
+    assert combined_keys == keys_batch_1 | keys_batch_2
 
 
 def test_two_cookies_have_disjoint_session_keys(spark: SparkSession) -> None:

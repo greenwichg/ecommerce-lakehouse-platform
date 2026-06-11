@@ -2,7 +2,11 @@
 # MAGIC %md
 # MAGIC # Silver — Products
 # MAGIC
-# MAGIC Same pipeline as silver_customers, keyed on ``product_id``.
+# MAGIC Same pipeline as silver_customers, keyed on ``product_id`` — and,
+# MAGIC like silver_customers, with NO late-arrival watermark: product
+# MAGIC snapshots carry ``updated_at`` = the product's last change, so a
+# MAGIC watermark would silently drop every long-stable product from the
+# MAGIC dim (see the rationale in silver_customers).
 
 # COMMAND ----------
 
@@ -28,7 +32,6 @@ from libs.paths import layer_root  # noqa: E402
 from libs.quality import PRODUCTS_RULES, split_quarantine  # noqa: E402
 from libs.silver import (  # noqa: E402
     append_quarantine,
-    apply_watermark,
     dedup_by_key,
     ensure_silver_table,
     merge_into_silver,
@@ -39,7 +42,6 @@ bucket = get_path(cfg, "storage.bucket")
 bronze_path = layer_root(bucket, cfg["paths"]["bronze_prefix"], "products")
 silver_path = layer_root(bucket, cfg["paths"]["silver_prefix"], "products")
 quarantine_path = layer_root(bucket, cfg["paths"]["quarantine_prefix"], "products")
-watermark_days = int(get_path(cfg, "data_quality.late_arrival_window_days", default=10))
 
 # COMMAND ----------
 
@@ -55,8 +57,7 @@ good_count = good.count()
 if bad_count > 0:
     append_quarantine(bad, quarantine_path)
 
-watermarked = apply_watermark(good, "updated_at", window_days=watermark_days)
-deduped = dedup_by_key(watermarked, ["product_id"], "updated_at")
+deduped = dedup_by_key(good, ["product_id"], "updated_at")
 merge_count = deduped.count()
 
 ensure_silver_table(spark, silver_path, deduped)  # noqa: F821

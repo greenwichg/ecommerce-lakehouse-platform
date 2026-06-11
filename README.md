@@ -6,7 +6,7 @@ A portfolio project demonstrating production patterns end-to-end: schema-evolvin
 
 ## Status — complete
 
-Built in seven vertical slices — one source flowing end-to-end before adding the next. **324 passing tests** (288 from Slices 1–5 + 25 dashboard / demo tests + 11 regression tests from the post-completion hardening pass). Lint / fmt all clean.
+Built in seven vertical slices — one source flowing end-to-end before adding the next. **331 passing tests** (288 from Slices 1–5 + 25 dashboard / demo tests + 18 from the post-completion hardening pass, including a full local end-to-end integration test). Lint / fmt all clean.
 
 | Slice | Scope | Status |
 |-------|-------|--------|

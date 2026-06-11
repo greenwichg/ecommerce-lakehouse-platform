@@ -118,6 +118,27 @@ def test_customer_ids_match_customers_pool() -> None:
     assert used.issubset(pool)
 
 
+def test_events_only_reference_entities_alive_at_event_time() -> None:
+    """Wishlist events must reference customers signed up — and products
+    introduced — by the event date, or the factless fact's PIT joins
+    orphan (same regression as generators.orders)."""
+    from generators.customers import _customer_id, signup_date_for
+    from generators.products import introduction_date_for
+
+    date = dt.date(2025, 5, 1)
+    n_cust, n_prod = 200, 100
+    signup_by_id = {_customer_id(42, i): signup_date_for(42, i) for i in range(n_cust)}
+    intro_by_id = {f"PRD-{42:04d}-{i:05d}": introduction_date_for(42, i) for i in range(n_prod)}
+
+    rows = generate_for_date(
+        date, seed=42, events_per_day=300, customer_pool_size=n_cust, product_pool_size=n_prod
+    )
+    assert rows
+    for r in rows:
+        assert signup_by_id[r["customer_id"]] <= date
+        assert intro_by_id[r["product_id"]] <= date
+
+
 def test_product_ids_match_products_pool() -> None:
     from generators.products import _product_id as products_id
 

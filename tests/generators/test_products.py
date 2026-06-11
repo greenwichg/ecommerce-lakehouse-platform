@@ -83,6 +83,17 @@ def test_price_stays_in_bounds_across_versions(products_test_cfg: dict) -> None:
             ), f"product {index} v.price {v.price} out of bounds"
 
 
+def test_introduction_date_for_matches_timeline(products_test_cfg: dict) -> None:
+    """RNG-alignment guard for the lightweight introduction-date helper
+    (counterpart of customers.signup_date_for)."""
+    from generators.products import introduction_date_for
+
+    cfg = products_test_cfg["generators"]["products"]
+    for index in range(100):
+        versions = _build_timeline(index, 42, cfg, dt.date(2099, 1, 1))
+        assert introduction_date_for(42, index) == versions[0].effective_from.date()
+
+
 def test_history_is_stable_across_generation_dates(products_test_cfg: dict) -> None:
     """Same regression guard as the customers generator: the version chain
     visible at date D must be identical whether the snapshot was generated

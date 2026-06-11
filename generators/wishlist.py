@@ -35,6 +35,8 @@ import datetime as dt
 import json
 import sys
 from dataclasses import dataclass
+from datetime import date as date_type
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -50,6 +52,8 @@ from libs.config import get_path, load_config  # noqa: E402
 from libs.paths import partition_path  # noqa: E402
 
 from generators._common import daily_dates, deterministic_uuid, seeded_rng  # noqa: E402
+from generators.customers import signup_date_for  # noqa: E402
+from generators.products import introduction_date_for  # noqa: E402
 
 _DEFAULT_EVENTS_PER_DAY = 5_000
 _DEFAULT_CUSTOMER_POOL = 10_000
@@ -86,6 +90,22 @@ def _product_pool_id(seed: int, index: int) -> str:
     return f"PRD-{seed:04d}-{index:05d}"
 
 
+@lru_cache(maxsize=256)
+def _eligible_customer_indices(seed: int, customer_count: int, as_of: date_type) -> tuple[int, ...]:
+    """Customers signed up by ``as_of`` — wishlist events must reference
+    customers that exist at event time so the factless fact's PIT join
+    resolves (same rationale as generators.orders)."""
+    eligible = tuple(i for i in range(customer_count) if signup_date_for(seed, i) <= as_of)
+    return eligible or tuple(range(customer_count))
+
+
+@lru_cache(maxsize=256)
+def _eligible_product_indices(seed: int, product_count: int, as_of: date_type) -> tuple[int, ...]:
+    """Products introduced by ``as_of`` (see above)."""
+    eligible = tuple(i for i in range(product_count) if introduction_date_for(seed, i) <= as_of)
+    return eligible or tuple(range(product_count))
+
+
 def generate_for_date(
     date: dt.date,
     seed: int,
@@ -95,12 +115,16 @@ def generate_for_date(
 ) -> list[dict]:
     """Build the day's wishlist events. Deterministic from (date, seed)."""
     events: list[dict] = []
+    customers_alive = _eligible_customer_indices(seed, customer_pool_size, date)
+    products_alive = _eligible_product_indices(seed, product_pool_size, date)
     for index in range(events_per_day):
         # Each event is seeded per (date, index, seed) so identical args
         # yield identical events.
         rng = seeded_rng("wishlist", seed, date.isoformat(), index)
-        customer_id = _customer_pool_id(seed, rng.randint(0, customer_pool_size - 1))
-        product_id = _product_pool_id(seed, rng.randint(0, product_pool_size - 1))
+        customer_id = _customer_pool_id(
+            seed, customers_alive[rng.randint(0, len(customers_alive) - 1)]
+        )
+        product_id = _product_pool_id(seed, products_alive[rng.randint(0, len(products_alive) - 1)])
         # added_at: random second within the day, monotonically usable for
         # ordering but not aligned to "real" diurnal traffic shape (kept
         # uniform for simplicity; documented as a Slice 5+ enhancement)

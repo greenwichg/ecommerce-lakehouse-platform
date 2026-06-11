@@ -32,6 +32,7 @@ import datetime as dt
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import click
@@ -87,6 +88,25 @@ class _CustomerVersion:
 
 def _customer_id(seed: int, index: int) -> str:
     return str(deterministic_uuid(f"customers:{seed}", index))
+
+
+@lru_cache(maxsize=65_536)
+def signup_date_for(seed: int, customer_index: int) -> dt.date:
+    """The deterministic signup date for one customer, without building
+    the full timeline.
+
+    Event generators (orders, wishlist, clickstream) use this to only
+    reference customers who exist at event time — otherwise their PIT
+    joins against dim_customer produce NULL surrogates and trip the
+    orphan-rate gates (threshold 1%).
+
+    Must consume the RNG stream in exactly the same order as
+    ``_build_timeline`` (faker-seed draw, then signup-offset draw);
+    ``test_signup_date_for_matches_timeline`` guards the alignment.
+    """
+    rng = seeded_rng("customer", seed, customer_index)
+    rng.randint(0, 1_000_000_000)  # the faker-seed draw in _build_timeline
+    return PROJECT_EPOCH + dt.timedelta(days=rng.randint(0, _SIGNUP_HORIZON_DAYS))
 
 
 def _build_timeline(

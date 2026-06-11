@@ -758,7 +758,7 @@ cfebfd9 docs(architecture+runbook): Slice 6 sections + correct test count
 
 ## Project complete — final summary
 
-**7 slices, ~140 files, 324 passing tests, 5 top-level docs + per-module READMEs.**
+**7 slices, ~140 files, 331 passing tests, 5 top-level docs + per-module READMEs.**
 
 | Slice | Headline | Tests added |
 |---|---|---|
@@ -769,7 +769,7 @@ cfebfd9 docs(architecture+runbook): Slice 6 sections + correct test count
 | 4 | Currency + customer_ltv + wishlist factless fact + MV | ~70 |
 | 5 | Terraform + Lambda validator + Step Functions quarantine + cost monitors | +42 |
 | 6 | Streamlit + CI/CD + docs + demo scenario | +33 |
-| — | Post-completion hardening pass (see below) | +11 |
+| — | Post-completion hardening pass (see below) | +18 |
 
 ### Post-completion hardening pass
 
@@ -810,6 +810,37 @@ A full-platform review + test sweep after Slice 6 found and fixed:
    `databricks/bundle.yml` + `databricks/README.md` which didn't exist;
    added the Asset Bundle (20 jobs matching the Airflow
    `databricks_job_*` variables) and pointed the job at the bundle root.
+9. **FK temporal misalignment in the generators**: orders / wishlist
+   drew customer + product FKs uniformly from the whole pool, but
+   signups/introductions spread over a 2-year horizon — ~30-38% of
+   events referenced entities that didn't exist yet at event time, so
+   the PIT joins NULLed their surrogates and every 1% orphan-rate gate
+   (gold notebook, Airflow DQ, Snowflake tests) failed by construction.
+   Event generators now sample from the entities alive at event time
+   (`customers.signup_date_for` / `products.introduction_date_for`
+   helpers, RNG-alignment-tested), and clickstream attributes a bound
+   cookie's visits only after the customer's signup.
+10. **Cross-batch session-key collisions** (`libs/sessionize.py`):
+    `silver_session_key` derived from the batch-relative `session_seq`,
+    so a cookie's first visit in EVERY hourly batch hashed to the same
+    key — distinct real sessions collided and fact_sessions glued them
+    into one row. Keys now derive from the island's first-event epoch.
+11. **Watermark applied to dimension snapshots**
+    (`silver_customers.py` / `silver_products.py`): the late-arrival
+    watermark keyed on `updated_at` = last entity change, silently
+    dropping every long-stable customer/product from Silver (and
+    therefore the dims) — nothing quarantined, PIT joins orphaned en
+    masse. Found by the new end-to-end test; dims no longer watermark
+    (the watermark is an event-stream concept and stays for orders).
+
+The pass closed with `databricks/tests/test_end_to_end_local.py` — the
+runbook's "Running end-to-end locally" recipe made executable: a dim
+warm-up snapshot + two daily batches over all six sources through
+Bronze → Silver → Gold on local Delta, a hand-injected bad row, an
+idempotent re-run, and the platform's cross-layer invariants asserted
+(orphan rate exactly 0, SCD2 chain integrity, PIT brackets, session
+event accounting, mart tie-outs). It uses the previously-unused
+`integration` pytest marker and is what surfaced bugs 9 and 11.
 
 ### What this project demonstrates
 

@@ -213,12 +213,19 @@ sessions over time, separated by >30 minutes of inactivity. Silver's
 sessionizer recomputes the *session* identity:
 
 ```
-silver_session_key = sha256(raw_session_id || '|' || session_seq)
+silver_session_key = sha256(raw_session_id || '|' || island_start_epoch)
 ```
 
-`session_seq` is the cumulative count of "new session" boundaries
-within a cookie (gap > 30 min OR first event), computed via window-
-function lag + cumulative sum. The textbook gap-and-island pattern.
+`session_seq` — the cumulative count of "new session" boundaries within
+a cookie (gap > 30 min OR first event), computed via window-function
+lag + cumulative sum (the textbook gap-and-island pattern) — is emitted
+as a batch-relative ordinal, but the KEY derives from the island's
+first event timestamp. Each hourly batch is sessionized in isolation,
+so a cookie's first visit in every batch is seq=1; a seq-derived key
+would collide across batches and fact_sessions would glue distinct
+sessions into one row. Keying on the island start makes the key
+independent of how much of the cookie's history a batch saw. (Known
+trade-off: a session straddling a batch boundary emits as two rows.)
 
 Why not Spark Structured Streaming `session_window`: our Silver runs
 batch (`availableNow=True`), not streaming. Mixing modes adds confusion

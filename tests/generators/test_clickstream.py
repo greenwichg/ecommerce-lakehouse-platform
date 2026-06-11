@@ -110,19 +110,25 @@ def test_event_types_from_known_enum() -> None:
 
 
 def test_anonymous_rate_approximately_30pct() -> None:
-    """Anonymity is per-cookie. Aggregated over many events, ~30% null."""
-    # Sweep many hours to get a large event sample.
-    all_events = []
-    for h_off in range(0, 200, 8):
-        h = PROJECT_EPOCH + dt.timedelta(hours=h_off)
-        all_events.extend(
-            generate_for_hour(h, seed=42, session_pool_size=500, customer_pool_size=100)
-        )
-    anon = sum(1 for r in all_events if r["customer_id"] is None)
-    if not all_events:
-        pytest.skip("not enough sampled events")
-    rate = anon / len(all_events)
-    assert 0.20 < rate < 0.40, f"anonymous rate {rate:.2%} outside [20%, 40%] band"
+    """~30% of cookies never attribute to a customer.
+
+    Measured at the cookie level over full visit timelines (hour-window
+    sampling is too sparse for a rate assertion). The all-anonymous rate
+    runs slightly above the 30% binding knob because a bound cookie whose
+    customer signs up after the cookie's last visit also never attributes
+    — pre-signup visits are anonymous by design."""
+    cookies_with_events = 0
+    all_anonymous = 0
+    for idx in range(400):
+        events = _build_visits_for_session(idx, seed=42, customer_pool_size=100)
+        if not events:
+            continue
+        cookies_with_events += 1
+        if all(e.customer_id is None for e in events):
+            all_anonymous += 1
+    assert cookies_with_events > 100
+    rate = all_anonymous / cookies_with_events
+    assert 0.22 < rate < 0.50, f"all-anonymous cookie rate {rate:.2%} outside [22%, 50%] band"
 
 
 def test_purchase_implies_prior_funnel_stages() -> None:
@@ -198,14 +204,21 @@ def test_cross_visit_gaps_exist() -> None:
 
 
 def test_customer_id_stable_within_cookie() -> None:
-    """A cookie's customer_id is stable across all its events (we don't
-    model cookie-shared-between-accounts)."""
+    """A cookie binds to at most ONE customer (we don't model
+    cookie-shared-between-accounts). Pre-signup visits are anonymous, so
+    a bound cookie may emit NULL then its customer_id — but never two
+    different non-null ids, and never an id before an anonymous event."""
     for idx in range(50):
         events = _build_visits_for_session(idx, seed=42, customer_pool_size=100)
         if not events:
             continue
-        cids = {e.customer_id for e in events}
-        assert len(cids) == 1, f"cookie {idx} has multiple customer_ids: {cids}"
+        non_null = {e.customer_id for e in events if e.customer_id is not None}
+        assert len(non_null) <= 1, f"cookie {idx} has multiple customer_ids: {non_null}"
+        anon_ts = [e.event_ts for e in events if e.customer_id is None]
+        attributed_ts = [e.event_ts for e in events if e.customer_id is not None]
+        if anon_ts and attributed_ts:
+            # The anonymous phase strictly precedes the attributed phase.
+            assert max(anon_ts) < min(attributed_ts), f"cookie {idx} re-anonymised after signup"
 
 
 def test_device_and_user_agent_stable_within_cookie() -> None:
@@ -237,6 +250,30 @@ def test_customer_ids_align_with_customers_generator_pool() -> None:
                 break
     assert non_null, "expected at least one non-null customer_id"
     assert non_null.issubset(expected_pool)
+
+
+def test_attribution_only_after_customer_signup() -> None:
+    """A visit attributed to a customer must start on/after the customer's
+    signup date — pre-signup visits emit customer_id = NULL. Otherwise the
+    Snowflake fact_sessions → dim_customer PIT join orphans those sessions
+    past the 1% gate (same regression class as generators.orders)."""
+    from generators.clickstream import _build_visits_for_session
+    from generators.customers import _customer_id, signup_date_for
+
+    n_cust = 100
+    signup_by_id = {_customer_id(42, i): signup_date_for(42, i) for i in range(n_cust)}
+
+    attributed_events = 0
+    for session_index in range(300):
+        for event in _build_visits_for_session(session_index, seed=42, customer_pool_size=n_cust):
+            if event.customer_id is None:
+                continue
+            attributed_events += 1
+            assert signup_by_id[event.customer_id] <= event.event_ts.date(), (
+                f"session {session_index} attributed to {event.customer_id} at "
+                f"{event.event_ts} before signup {signup_by_id[event.customer_id]}"
+            )
+    assert attributed_events > 0, "expected some attributed events across 300 cookies"
 
 
 def test_run_writes_hourly_partitions(clickstream_test_cfg: dict, tmp_path: Path) -> None:

@@ -21,6 +21,7 @@ import datetime as dt
 import io
 import sys
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -73,6 +74,21 @@ class _ProductVersion:
 
 def _product_id(seed: int, index: int) -> str:
     return f"PRD-{seed:04d}-{index:05d}"
+
+
+@lru_cache(maxsize=65_536)
+def introduction_date_for(seed: int, product_index: int) -> dt.date:
+    """The deterministic catalogue-introduction date for one product.
+
+    Counterpart of ``customers.signup_date_for`` — event generators use
+    it to only reference products that exist at event time (PIT-join
+    orphan prevention). Must consume the RNG stream in the same order as
+    ``_build_timeline``; ``test_introduction_date_for_matches_timeline``
+    guards the alignment.
+    """
+    rng = seeded_rng("product", seed, product_index)
+    rng.randint(0, 1_000_000_000)  # the faker-seed draw in _build_timeline
+    return PROJECT_EPOCH + dt.timedelta(days=rng.randint(0, _INTRODUCTION_HORIZON_DAYS))
 
 
 def _build_timeline(

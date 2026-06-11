@@ -179,6 +179,37 @@ def test_order_spec_cancellation_clears_later_timestamps(orders_test_cfg: dict) 
     assert found_step1, "expected at least one early-cancellation spec in 200 trials"
 
 
+def test_orders_only_reference_entities_alive_at_placement(orders_test_cfg: dict) -> None:
+    """Every order's customer must be signed up — and its product
+    introduced — by the order's placement date.
+
+    Regression: FKs used to be drawn uniformly from the whole pool, so
+    ~30%+ of orders referenced not-yet-existing entities; their PIT joins
+    NULLed the surrogates and the 1% orphan-rate gates failed every run.
+    """
+    from generators.customers import _customer_id, signup_date_for
+    from generators.products import introduction_date_for
+
+    cfg = orders_test_cfg["generators"]["orders"]
+    date = dt.date(2025, 5, 1)  # mid-horizon: ~1/3 of entities don't exist yet
+    n_cust, n_prod = 200, 100
+    signup_by_id = {_customer_id(42, i): signup_date_for(42, i) for i in range(n_cust)}
+    intro_by_id = {f"PRD-{42:04d}-{i:05d}": introduction_date_for(42, i) for i in range(n_prod)}
+
+    records = generate_for_date(date, cfg, seed=42, customer_count=n_cust, product_count=n_prod)
+    assert records
+    for rec in records:
+        placed = rec["created_at"].date()
+        assert signup_by_id[rec["customer_id"]] <= placed, (
+            f"order {rec['order_id']} placed {placed} references customer "
+            f"signed up {signup_by_id[rec['customer_id']]}"
+        )
+        assert intro_by_id[rec["product_id"]] <= placed, (
+            f"order {rec['order_id']} placed {placed} references product "
+            f"introduced {intro_by_id[rec['product_id']]}"
+        )
+
+
 def test_run_writes_one_file_per_partition(orders_test_cfg: dict, tmp_path: Path) -> None:
     bucket = f"file://{tmp_path}"
     written = run(
